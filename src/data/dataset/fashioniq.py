@@ -84,6 +84,7 @@ class IterativeFashionIQDataset(IterativeRetrievalDataset):
         
         ref_full_path = self._get_full_image_path(ref_image_path)
         tgt_full_path = self._get_full_image_path(target_image_path)
+        original_mod_text = modification_text.strip() if isinstance(modification_text, str) else str(modification_text)
 
         return {
             "query_text": query_text,
@@ -97,6 +98,7 @@ class IterativeFashionIQDataset(IterativeRetrievalDataset):
             "reference_id": self._get_reference_id(ref_full_path),
             "is_augmented": False,
             "category": sample.get("category", ""),  # FashionIQ特有的类别信息
+            "original_mod_text": original_mod_text,
         }
 
     def _get_augmented_sample(self, idx: int) -> Dict[str, Any]:
@@ -125,6 +127,10 @@ class IterativeFashionIQDataset(IterativeRetrievalDataset):
         
         ref_full_path = self._get_full_image_path(sample["reference_image"])
 
+        original_mod_text = sample.get("original_mod_text", "")
+        if isinstance(original_mod_text, str):
+            original_mod_text = original_mod_text.strip()
+
         return {
             "query_text": query_text,
             "query_image": self._load_image(sample["reference_image"]),
@@ -134,7 +140,7 @@ class IterativeFashionIQDataset(IterativeRetrievalDataset):
             "neg_image": self._load_image(sample["reference_image"]),
             "global_dataset_name": "FashionIQ",
             "is_augmented": True,
-            "original_mod_text": sample.get("original_mod_text", ""),
+            "original_mod_text": original_mod_text,
             "reference_image": ref_full_path,
             "reference_id": self._get_reference_id(ref_full_path),
             "category": sample.get("category", ""),  # FashionIQ特有的类别信息

@@ -93,16 +93,32 @@ class MMEBModel(nn.Module):
                 return vfeat
 
         elif getattr(self, "model_backbone", None) in [GME, LamRA, LamRA_QWEN2_5]:
-            # we are actually passing video queries so this should not happen
-            texts = [text.replace(VLM_IMAGE_TOKENS[QWEN2_VL] + "\n", "") for text in input["texts"]]
+            raw_texts = input.get("texts", [])
+            texts = []
+            for text in raw_texts:
+                if isinstance(text, str):
+                    texts.append(text.replace(VLM_IMAGE_TOKENS[QWEN2_VL] + "\n", ""))
+                else:
+                    texts.append(text)
+
             images = []
-            for imgs in input["images"]:
+            for imgs in input.get("images", []):
                 # if multi images are given, select the middle frame only
                 if isinstance(imgs, list):
+                    if len(imgs) == 0:
+                        images.append(None)
+                        continue
                     imgs = imgs[len(imgs) // 2]
-                assert not isinstance(imgs, list)  # ensure we have extracted the middle frame
                 images.append(imgs)
-            pooled_output = self.encoder.get_fused_embeddings(texts=texts, images=images)
+
+            instruction = input.get("instruction", None)
+            is_query = input.get("is_query", True)
+            pooled_output = self.encoder.get_fused_embeddings(
+                texts=texts,
+                images=images,
+                is_query=is_query,
+                instruction=instruction,
+            )
             return pooled_output
 
         elif getattr(self, "model_backbone", None) == COLPALI:
@@ -150,14 +166,58 @@ class MMEBModel(nn.Module):
         This is needed when using --gradient_checkpointing True in training.
         （行为不变：仅在底模支持时开启；否则保持原本状态）
         """
+        if gradient_checkpointing_kwargs is None:
+            gradient_checkpointing_kwargs = {}
+        # LoRA + DDP + gradient checkpointing 会在默认 use_reentrant=True 时触发
+        # “mark parameter ready twice” 报错，因此默认改成 False，可被显式参数覆盖
+        gradient_checkpointing_kwargs.setdefault("use_reentrant", False)
+
         if hasattr(self.encoder, "gradient_checkpointing_enable"):
-            self.encoder.gradient_checkpointing_enable(gradient_checkpointing_kwargs)
+            self.encoder.gradient_checkpointing_enable(gradient_checkpointing_kwargs=gradient_checkpointing_kwargs)
         else:
             # Fallback for models that don't have this method
             if hasattr(self.encoder, "config"):
                 self.encoder.config.use_cache = False
             if hasattr(self.encoder, "gradient_checkpointing"):
                 self.encoder.gradient_checkpointing = True
+        # Ensure embeddings allow gradient flow when checkpointing is active
+        self.enable_input_require_grads()
+
+    def enable_input_require_grads(self):
+        """
+        Mirror HF PreTrainedModel.enable_input_require_grads so Trainer can un-freeze
+        the embedding inputs when gradient checkpointing + LoRA are both enabled.
+        """
+        if getattr(self, "_enable_input_require_grads_called", False):
+            return
+        self._enable_input_require_grads_called = True
+        if hasattr(self.encoder, "enable_input_require_grads"):
+            self.encoder.enable_input_require_grads()
+            return
+
+        get_input_embeddings = getattr(self.encoder, "get_input_embeddings", None)
+        if callable(get_input_embeddings):
+            input_embeddings = get_input_embeddings()
+            if input_embeddings is not None and hasattr(input_embeddings, "weight"):
+                input_embeddings.weight.requires_grad_(True)
+                if not hasattr(self, "_input_grad_hook"):
+                    def _make_inputs_require_grad(_, inputs, output):
+                        if isinstance(output, torch.Tensor):
+                            output.requires_grad_(True)
+                            return output
+                        if isinstance(output, tuple):
+                            new_output = []
+                            changed = False
+                            for item in output:
+                                if isinstance(item, torch.Tensor):
+                                    new_output.append(item.requires_grad_(True))
+                                    changed = True
+                                else:
+                                    new_output.append(item)
+                            if changed:
+                                return tuple(new_output)
+                        return output
+                    self._input_grad_hook = input_embeddings.register_forward_hook(_make_inputs_require_grad)
 
     @classmethod
     def build(cls, model_args: ModelArguments, **kwargs):

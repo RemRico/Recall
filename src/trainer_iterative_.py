@@ -33,7 +33,7 @@ from src.retrieval.engine import RetrievalEngine
 from src.aug.caption_generator import CaptionGenerator
 
 # 各 backbone 的 prompt builder（若没配 LLaVA/Generic 会自动降级成 no-op）
-from src.prompt.qwen.builder import prepare_inputs as qwen_prepare, generate_with_qwen
+from src.prompt.qwen.builder_v2 import prepare_inputs_v2 as qwen_prepare, generate_with_qwen_v2 as generate_with_qwen
 try:
     from src.prompt.llava.builder import prepare_inputs as llava_prepare, generate_with_llava
 except Exception:
@@ -208,6 +208,7 @@ class IterativeRetrievalTrainer(MMEBTrainer):
 
         reference_ids = qry_inputs.pop("reference_ids", None)
         is_augmented = qry_inputs.pop("is_augmented", None)
+        anchor_group_ids = qry_inputs.pop("anchor_group_ids", None)
 
         info_weight = getattr(self, "_current_info_weight", getattr(self.args, "info_nce_weight", 1.0))
         triplet_weight = getattr(self, "_current_triplet_weight", getattr(self.args, "triplet_loss_weight", 0.0))
@@ -239,6 +240,7 @@ class IterativeRetrievalTrainer(MMEBTrainer):
                 outputs.get("tgt_reps_local"),
                 reference_ids,
                 is_augmented,
+                anchor_group_ids,
             )
             if triplet_loss is not None:
                 if loss.requires_grad:
@@ -275,6 +277,7 @@ class IterativeRetrievalTrainer(MMEBTrainer):
         tgt_reps: Optional[torch.Tensor],
         reference_ids: Optional[torch.Tensor],
         is_augmented: Optional[torch.Tensor],
+        anchor_group_ids: Optional[torch.Tensor],
     ) -> Optional[torch.Tensor]:
         if qry_reps is None or tgt_reps is None or reference_ids is None:
             return None
@@ -283,6 +286,8 @@ class IterativeRetrievalTrainer(MMEBTrainer):
         reference_ids = reference_ids.to(qry_reps.device)
         if is_augmented is not None:
             is_augmented = is_augmented.to(qry_reps.device)
+        if anchor_group_ids is not None:
+            anchor_group_ids = anchor_group_ids.to(qry_reps.device)
 
         unique_refs = torch.unique(reference_ids)
         weighted_losses = []
@@ -290,36 +295,47 @@ class IterativeRetrievalTrainer(MMEBTrainer):
         margin = getattr(self.args, "triplet_margin", 0.2)
 
         for ref in unique_refs:
-            mask = reference_ids == ref
-            group_size = int(mask.sum().item())
-            if group_size < 2:
-                continue
+            ref_mask = reference_ids == ref
+            if anchor_group_ids is None:
+                anchor_values = [None]
+            else:
+                anchor_values = torch.unique(anchor_group_ids[ref_mask])
 
-            anchor_q = qry_reps[mask]
-            pos_t = tgt_reps[mask]
+            for anchor_val in anchor_values:
+                if anchor_group_ids is None:
+                    group_mask = ref_mask
+                else:
+                    group_mask = ref_mask & (anchor_group_ids == anchor_val)
 
-            anchors_exp = anchor_q.unsqueeze(1).expand(group_size, group_size, -1)
-            positives_exp = pos_t.unsqueeze(1).expand(group_size, group_size, -1)
-            negatives_exp = pos_t.unsqueeze(0).expand(group_size, group_size, -1)
+                group_size = int(group_mask.sum().item())
+                if group_size < 2:
+                    continue
 
-            off_diag_mask = ~torch.eye(group_size, dtype=torch.bool, device=anchor_q.device)
-            anchors = anchors_exp[off_diag_mask]
-            positives = positives_exp[off_diag_mask]
-            negatives = negatives_exp[off_diag_mask]
+                anchor_q = qry_reps[group_mask]
+                pos_t = tgt_reps[group_mask]
 
-            if anchors.numel() == 0:
-                continue
+                anchors_exp = anchor_q.unsqueeze(1).expand(group_size, group_size, -1)
+                positives_exp = pos_t.unsqueeze(1).expand(group_size, group_size, -1)
+                negatives_exp = pos_t.unsqueeze(0).expand(group_size, group_size, -1)
 
-            group_loss = F.triplet_margin_loss(
-                anchors,
-                positives,
-                negatives,
-                margin=margin,
-                reduction="mean",
-            )
-            triplet_count = group_size * (group_size - 1)
-            weighted_losses.append(group_loss * triplet_count)
-            total_triplets += triplet_count
+                off_diag_mask = ~torch.eye(group_size, dtype=torch.bool, device=anchor_q.device)
+                anchors = anchors_exp[off_diag_mask]
+                positives = positives_exp[off_diag_mask]
+                negatives = negatives_exp[off_diag_mask]
+
+                if anchors.numel() == 0:
+                    continue
+
+                group_loss = F.triplet_margin_loss(
+                    anchors,
+                    positives,
+                    negatives,
+                    margin=margin,
+                    reduction="mean",
+                )
+                triplet_count = group_size * (group_size - 1)
+                weighted_losses.append(group_loss * triplet_count)
+                total_triplets += triplet_count
 
         if total_triplets == 0 or not weighted_losses:
             # ensure a tensor connected to graph so downstream loss keeps gradients
@@ -1474,6 +1490,10 @@ class IterativeRetrievalTrainer(MMEBTrainer):
             orig_chars, gen_chars = [], []
             orig_words, gen_words = [], []
             refs, tgts, orig_tgts, pairs = set(), set(), set(), set()
+            gt_ranks, gt_topk_ranks, gt_similarities = [], [], []
+            gt_present_cnt = 0
+            gt_before_cnt = 0
+            gt_after_cnt = 0
 
             # optional counters
             has_original_cnt = 0
@@ -1504,6 +1524,28 @@ class IterativeRetrievalTrainer(MMEBTrainer):
                 if orig_tgt: orig_tgts.add(orig_tgt)
                 if ref and tgt:
                     pairs.add((ref, tgt))
+
+                # ----- gt rank metadata -----
+                gt_rank = s.get("gt_rank")
+                if isinstance(gt_rank, (int, float)) and gt_rank >= 0:
+                    gt_ranks.append(int(gt_rank))
+
+                gt_topk_rank = s.get("gt_topk_rank")
+                if isinstance(gt_topk_rank, (int, float)) and gt_topk_rank >= 0:
+                    gt_topk_ranks.append(int(gt_topk_rank))
+
+                if s.get("gt_in_candidates") is True:
+                    gt_present_cnt += 1
+
+                before_gt = s.get("is_before_gt_in_topk")
+                if before_gt is True:
+                    gt_before_cnt += 1
+                elif before_gt is False and s.get("gt_in_candidates") is True:
+                    gt_after_cnt += 1
+
+                gt_sim = s.get("gt_similarity")
+                if isinstance(gt_sim, (int, float)):
+                    gt_similarities.append(float(gt_sim))
 
                 # ----- optional: source breakdown -----
                 src = s.get("source")
@@ -1549,6 +1591,23 @@ class IterativeRetrievalTrainer(MMEBTrainer):
                     "avg_words": _mean(gen_words),
                     "median_words": _median(gen_words),
                     "p95_words": _p95(gen_words),
+                },
+                "gt_metrics": {
+                    "with_global_rank": len(gt_ranks),
+                    "avg_global_rank": _mean(gt_ranks),
+                    "median_global_rank": _median(gt_ranks),
+                    "p95_global_rank": _p95(gt_ranks),
+                    "with_topk_rank": len(gt_topk_ranks),
+                    "avg_topk_rank": _mean(gt_topk_ranks),
+                    "median_topk_rank": _median(gt_topk_ranks),
+                    "p95_topk_rank": _p95(gt_topk_ranks),
+                    "gt_in_candidates_count": gt_present_cnt,
+                    "gt_in_candidates_ratio": (gt_present_cnt / total) if total else 0.0,
+                    "before_gt_in_topk": gt_before_cnt,
+                    "after_gt_in_topk": gt_after_cnt,
+                    "avg_gt_similarity": _mean(gt_similarities),
+                    "median_gt_similarity": _median(gt_similarities),
+                    "p95_gt_similarity": _p95(gt_similarities),
                 },
                 "unique_pairs": len(pairs),
                 "duplicate_pair_count": max(0, total - len(pairs)),  # 简易估计

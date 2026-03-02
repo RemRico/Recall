@@ -658,8 +658,8 @@ if __name__ == "__main__":
 # 运行示例（在 bash 终端执行，以下命令已注释）
 # 1) 单卡 - 完整权重目录（非 LoRA）
 # python retrieval_cirr.py \
-#   --model_path /home/guohaiyun/yangtianyu/MyComposedRetrieval/experiments/IterativeCIRR_qwen2vl_20250918_191807/training_iter_0/checkpoint-1500 \
-#   --device cuda \
+#   --model_path /home/guohaiyun/yangtianyu/MyComposedRetrieval/experiments/IterativeCIRR_qwen2_5vl_7b_20251012_004205_copy_gruopsamplerfix_copy_triplet_loss_i0.8_t0.2_margin0.05/training_iter_1/checkpoint-2500 \
+#   --device cuda:2 \
 #   --top_k 10 \
 #   --batch_size 8 \
 #   --model_name auto-infer

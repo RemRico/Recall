@@ -66,6 +66,9 @@ production_save_steps: 100        # Save frequency
 - `fast_mode`: Enable fast mode for quick testing (default: false)
 - `max_iterations`: Number of iterative rounds (default: 3)
 - `hard_neg_collection_freq`: Frequency of hard negative collection (default: 1)
+- `hard_neg_top_k`: Retrieval top-k retained for mining (default: 10)
+- `hard_neg_post_gt`: Additional negatives sampled after GT rank (default: 0)
+- `hard_neg_per_query`: Maximum hard negatives stored per query (default: 5)
 - `caption_generation_batch_size`: Batch size for caption generation (default: 8)
 - `foundation_model_name`: Foundation model for caption generation
 

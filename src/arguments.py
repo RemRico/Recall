@@ -11,6 +11,7 @@ class ModelArguments:
     model_backbone: str = field(default=None, metadata={"help": "HF model type"})
     checkpoint_path: str = field(default=None, metadata={"help": "a local model path, could be a LoRA version"})
     foundation_model_name: str = field(default=None, metadata={"help": "foundation model name for iterative training caption generation"})
+    foundation_prompt_mode: str = field(default="minimal", metadata={"help": "prompt mode for foundation caption generation (cot|minimal)"})
     pooling: str = field(default='last', metadata={"help": "pooling method for encoder"})
     normalize: bool = field(default=False, metadata={"help": "normalize query and passage representations"})
     temperature: float = field(default=0.02, metadata={"help": "temperature for softmax"})
@@ -59,6 +60,24 @@ class TrainingArguments(TrainingArguments):
     )
     use_original_data_in_iter_plus: bool = field(
         default=True, metadata={"help": "Whether to use original data in iterations > 0. If False, only augmented data will be used."}
+    )
+    sampler_debug: bool = field(
+        default=True, metadata={"help": "Enable grouped sampler debug logging (summaries, previews)."}
+    )
+    sampler_debug_max_batches: int = field(
+        default=5, metadata={"help": "Number of batches to preview in sampler debug logging."}
+    )
+    sampler_debug_preview_groups: int = field(
+        default=3, metadata={"help": "Number of representative groups to preview when sampler debug is on."}
+    )
+    sampler_debug_preview_items: int = field(
+        default=3, metadata={"help": "Number of samples to print per preview group or batch when debug is on."}
+    )
+    sampler_debug_preview_chars: int = field(
+        default=80, metadata={"help": "Max characters to show per text field in sampler previews."}
+    )
+    sampler_debug_preview_small_max_size: int = field(
+        default=4, metadata={"help": "Preferred max size of groups to display in sampler previews; set 0 to disable small-group preference."}
     )
     # evaluation_strategy: str = field(default='no', metadata={"help": "The evaluation strategy to adopt during training. Possible values are: 'no', 'steps', 'epoch'"})
     # per_device_train_batch_size: int = field(default=8, metadata={"help": "The batch size per GPU/TPU core/CPU for training."})

@@ -14,7 +14,9 @@ CIRR:
     # Iterative training specific configs - PRODUCTION
     max_iterations: 2  # Full iterative training cycles
     hard_neg_collection_freq: 1
-    hard_neg_top_k: 10
+    hard_neg_top_k: 10            # 增大 top-k，便于获取 GT 之后的候选
+    hard_neg_post_gt: 0           # 额外采样排在 GT 之后的候选数量
+    hard_neg_per_query: 5         # 每个查询最多保留的硬负样本数量
     caption_generation_batch_size: 16  # Increased for 8-GPU production
     
     # Production mode settings - ENABLED for production training
@@ -39,6 +41,6 @@ CIRR:
     # fast_mode_logging_steps: 2  # Verbose logging for debugging
     
     # Foundation model for caption generation - Qwen2VL-7B
-    foundation_model_name: "/home/guohaiyun/yangtianyu/CPRCIR/checkpoints/hf_models/Qwen2-VL-7B-Instruct"
-    foundation_model_temperature: 0.7
-    foundation_model_max_length: 128  # Increased for better quality
+    foundation_model_name: "/home/guohaiyun/yangtianyu/CPRCIR/checkpoints/hf_models/Qwen2.5-VL-7B-Instruct"
+    foundation_model_temperature: 0.8  # Align with prompt builder defaults
+    foundation_model_max_length: 2048  # Align with max_new_tokens used in generation

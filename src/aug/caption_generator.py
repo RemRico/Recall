@@ -55,6 +55,8 @@ class CaptionGenerator:
         # ===== NEW: 路径上下文 =====
         self.image_base_dir = image_base_dir or ""
         self.image_splits = image_splits or {}
+        self._preview_printed = 0
+        self._preview_limit = 5
 
     # ===== NEW: 统一把 {ref/target/hn} 三类路径规范到绝对路径 =====
     def _resolve_image_path(self, p: str) -> str:
@@ -101,6 +103,29 @@ class CaptionGenerator:
         except Exception:
             return []
 
+    @staticmethod
+    def _sanitize_rank(value):
+        """Normalize rank-like values to non-negative ints or None."""
+        if isinstance(value, bool) or value is None:
+            return int(value) if isinstance(value, bool) else None
+        try:
+            ivalue = int(value)
+            return ivalue if ivalue >= 0 else None
+        except (ValueError, TypeError, OverflowError):
+            return None
+
+    @staticmethod
+    def _sanitize_float(value):
+        """Normalize float-like values for JSON serialization."""
+        if value is None:
+            return None
+        if isinstance(value, bool):
+            return float(value)
+        try:
+            return float(value)
+        except (ValueError, TypeError):
+            return None
+
     def _normalize_item_paths(self, item: dict) -> dict:
         out = dict(item)
         if "reference_image" in out:
@@ -144,6 +169,8 @@ class CaptionGenerator:
         total_batches = (len(hard_negatives) + batch_size - 1) // batch_size
         start_time = time.time()
 
+        minimal_mode = getattr(self.model_args, "foundation_prompt_mode", "minimal") == "minimal"
+
         for i in range(0, len(hard_negatives), batch_size):
             batch_idx = i // batch_size + 1
             batch = hard_negatives[i:i+batch_size]
@@ -159,7 +186,7 @@ class CaptionGenerator:
             print_rank(f"Processing batch {batch_idx}/{total_batches} ({len(batch)}) - {eta}")
             try:
                 batch_start = time.time()
-                batch_aug = self._generate_caption_batch(batch)
+                batch_aug = self._generate_caption_batch(batch, minimal_mode=minimal_mode)
                 augmented_samples.extend(batch_aug)
                 print_rank(f"Batch {batch_idx}/{total_batches} done in {time.time()-batch_start:.1f}s, +{len(batch_aug)}")
             except Exception as e:
@@ -167,12 +194,13 @@ class CaptionGenerator:
                 continue
 
         augmented_samples = self.validator.filter_valid_samples(augmented_samples)
+        self._log_preview(augmented_samples)
         self._save_augmented_samples(augmented_samples)
         total_time = time.time() - start_time
         print_rank(f"✅ Generated {len(augmented_samples)} samples in {total_time:.1f}s")
         return augmented_samples
 
-    def _generate_caption_batch(self, hard_negatives_batch):
+    def _generate_caption_batch(self, hard_negatives_batch, minimal_mode: bool = False):
         """批量生成 caption（与单卡/多卡复用）"""
         from PIL import Image
 
@@ -204,23 +232,64 @@ class CaptionGenerator:
                 print_rank(f"Error preparing sample: {e}")
 
         # 生成
+        generated_texts = []
         if ref_images:
             generated_texts = self.batcher.generate_batch(
                 ref_images, tgt_images, texts, foundation_processor, device
             )
-            for hard_neg, gen_text in zip(meta, generated_texts):
-                if gen_text and self.validator.is_valid(gen_text):
-                    augmented.append({
-                        "reference_image": hard_neg["reference_image"],
-                        "modification_text": gen_text,
-                        "target_image": hard_neg.get("hard_negative_image", hard_neg.get("target_image")),
-                        "original_target_image": hard_neg.get("target_image"),
-                        "original_mod_text": hard_neg["modification_text"],
-                        "is_augmented": True,
-                        "hard_negative_rank": hard_neg.get("rank_position"),
-                        "similarity_score": hard_neg.get("similarity_score")
-                    })
+        for hard_neg, gen_text in zip(meta, generated_texts):
+            if gen_text and self.validator.is_valid(gen_text):
+                candidate_rank = self._sanitize_rank(hard_neg.get("rank_position"))
+                gt_rank = self._sanitize_rank(hard_neg.get("gt_rank"))
+                gt_topk_rank = self._sanitize_rank(hard_neg.get("gt_topk_rank"))
+                gt_in_candidates = hard_neg.get("gt_in_candidates")
+                if isinstance(gt_in_candidates, bool):
+                    gt_in_candidates_val = gt_in_candidates
+                else:
+                    gt_in_candidates_val = bool(gt_in_candidates) if gt_in_candidates is not None else None
+                is_before_gt = None
+                if gt_topk_rank is not None and candidate_rank is not None:
+                    is_before_gt = candidate_rank < gt_topk_rank
+                similarity_score = self._sanitize_float(hard_neg.get("similarity_score"))
+                gt_similarity = self._sanitize_float(hard_neg.get("gt_similarity"))
+
+                augmented.append({
+                    "reference_image": hard_neg["reference_image"],
+                    "modification_text": gen_text,
+                    "target_image": hard_neg.get("hard_negative_image", hard_neg.get("target_image")),
+                    "original_target_image": hard_neg.get("target_image"),
+                    "original_mod_text": hard_neg["modification_text"],
+                    "is_augmented": True,
+                    "hard_negative_rank": candidate_rank,
+                    "gt_rank": gt_rank,
+                    "gt_topk_rank": gt_topk_rank,
+                    "gt_in_candidates": gt_in_candidates_val,
+                    "is_before_gt_in_topk": is_before_gt,
+                    "similarity_score": similarity_score,
+                    "gt_similarity": gt_similarity,
+                })
+                if minimal_mode and self._preview_printed < self._preview_limit:
+                    orig_text = hard_neg.get("modification_text")
+                    tgt_img = hard_neg.get("hard_negative_image", hard_neg.get("target_image"))
+                    print_rank(
+                        f"[Preview {self._preview_printed+1}/{self._preview_limit}] target={tgt_img}; original='{orig_text}'; new='{gen_text}'"
+                    )
+                    self._preview_printed += 1
+            elif minimal_mode:
+                print_rank("[CaptionGenerator] minimal pipeline returned empty or invalid text; sample skipped")
         return augmented
+
+    def _log_preview(self, augmented_samples, preview_count: int = 5):
+        if not augmented_samples:
+            return
+        print_rank("--- Preview of generated samples (minimal rewrite mode) ---")
+        for idx, sample in enumerate(augmented_samples[:preview_count]):
+            orig = sample.get("original_mod_text") or sample.get("original_text")
+            new = sample.get("modification_text")
+            tgt = sample.get("target_image")
+            print_rank(f"[{idx+1}] target={tgt}; original='{orig}'; new='{new}'")
+        if len(augmented_samples) > preview_count:
+            print_rank(f"... (total {len(augmented_samples)} samples)")
 
     # =========================
     #        分布式逻辑
@@ -230,6 +299,7 @@ class CaptionGenerator:
         多卡分布式 caption 生成（文件式同步与聚合）
         完整复刻你原始实现的行为，但模块化并复用验证/保存函数。
         """
+        minimal_mode = getattr(self.model_args, "foundation_prompt_mode", "minimal") == "minimal"
         if not self.foundation_model:
             print_rank("No foundation model provided, skipping caption generation")
             return []
@@ -296,7 +366,7 @@ class CaptionGenerator:
 
                 try:
                     t0 = time.time()
-                    batch_aug = self._generate_caption_batch(batch)
+                    batch_aug = self._generate_caption_batch(batch, minimal_mode=minimal_mode)
                     local_aug.extend(batch_aug)
                     if bidx % 5 == 0 or rank == 0 or bidx == total_batches:
                         print_rank(f"GPU {rank}: ✅ Batch {bidx}/{total_batches} in {time.time()-t0:.1f}s, +{len(batch_aug)}")
@@ -379,6 +449,8 @@ class CaptionGenerator:
 
             # 保存最终文件（原子落盘）
             self._save_augmented_samples(merged)
+            if merged:
+                self._log_preview(merged)
             print_rank(f"✅ GPU 0: Saved {len(merged)} merged samples")
 
             # 不在此处清理，等所有 rank 读取完成后再清理，避免部分 rank 仍在等待文件
@@ -459,6 +531,33 @@ class CaptionGenerator:
         ref_images = {s.get("reference_image") for s in samples if s.get("reference_image")}
         tgt_images = {s.get("target_image") for s in samples if s.get("target_image")}
         orig_tgt_images = {s.get("original_target_image") for s in samples if s.get("original_target_image")}
+        gt_ranks = []
+        gt_topk_ranks = []
+        gt_present = 0
+        gt_before = 0
+        gt_after = 0
+        gt_similarities = []
+        for sample in samples:
+            rank = self._sanitize_rank(sample.get("gt_rank"))
+            if rank is not None:
+                gt_ranks.append(rank)
+            topk_rank = self._sanitize_rank(sample.get("gt_topk_rank"))
+            if topk_rank is not None:
+                gt_topk_ranks.append(topk_rank)
+            if sample.get("gt_in_candidates") is True:
+                gt_present += 1
+            before_gt = sample.get("is_before_gt_in_topk")
+            if before_gt is True:
+                gt_before += 1
+            elif before_gt is False and sample.get("gt_in_candidates") is True:
+                gt_after += 1
+            gt_sim = self._sanitize_float(sample.get("gt_similarity"))
+            if gt_sim is not None:
+                gt_similarities.append(gt_sim)
+
+        def _safe_mean(values):
+            return float(sum(values)) / len(values) if values else None
+
         # 附带基础统计
         summary = {
             "total_samples": len(samples),
@@ -470,6 +569,17 @@ class CaptionGenerator:
                 "unique_reference_images": len(ref_images),
                 "unique_target_images": len(tgt_images),
                 "unique_original_target_images": len(orig_tgt_images),
+                "gt_metrics": {
+                    "with_global_rank": len(gt_ranks),
+                    "avg_global_rank": _safe_mean(gt_ranks),
+                    "with_topk_rank": len(gt_topk_ranks),
+                    "avg_topk_rank": _safe_mean(gt_topk_ranks),
+                    "gt_in_candidates": gt_present,
+                    "gt_in_candidates_ratio": (gt_present / len(samples)) if samples else 0.0,
+                    "before_gt_in_topk": gt_before,
+                    "after_gt_in_topk": gt_after,
+                    "avg_gt_similarity": _safe_mean(gt_similarities),
+                },
             },
             "samples": samples
         }

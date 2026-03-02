@@ -11,6 +11,13 @@ from typing import Dict, List, Tuple, Any
 from PIL import Image
 from tqdm import tqdm
 
+from ..model.processor import (
+    GME,
+    LamRA,
+    LamRA_QWEN2_5,
+    GME_CIRR_QUERY_INSTRUCTION,
+)
+
 try:
     from ..utils import print_rank, print_master
 except ImportError:
@@ -613,6 +620,9 @@ class CIRREvaluator:
                 'text': texts,
                 'images': wrapped_images
             }
+            if self.model_backbone in {GME, LamRA, LamRA_QWEN2_5}:
+                batch_data['is_query'] = False
+                batch_data['instruction'] = None
             
             # Use unified encoding function
             batch_embeddings = self._encode_batch(batch_data)
@@ -660,6 +670,9 @@ class CIRREvaluator:
                 'text': batch_texts,
                 'images': batch_images
             }
+            if self.model_backbone in {GME, LamRA, LamRA_QWEN2_5}:
+                batch_data['is_query'] = True
+                batch_data['instruction'] = GME_CIRR_QUERY_INSTRUCTION
             
             # Use unified encoding function
             batch_embeddings = self._encode_batch(batch_data)

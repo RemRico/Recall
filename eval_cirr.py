@@ -249,6 +249,35 @@ def _align_data_args_with_training(model_path: str, data_args: DataArguments, ve
                 print_master("⚠️ Could not infer training resize_max_pixels; using library default.")
 
 
+def detect_fullft_checkpoint(model_path: str) -> bool:
+    """
+    Detect if this is a full fine-tuning checkpoint.
+    
+    Heuristics:
+    - Path contains "FullFT" or "fullft"
+    - Has model.safetensors or pytorch_model.bin but NO adapter_config.json
+    """
+    path_str = str(model_path).lower()
+    has_fullft_marker = 'fullft' in path_str or 'full_ft' in path_str or 'fullfinetune' in path_str
+    
+    # Check for model files
+    has_model_file = False
+    if os.path.isdir(model_path):
+        for fname in ['model.safetensors', 'pytorch_model.bin', 'model.bin']:
+            if os.path.exists(os.path.join(model_path, fname)):
+                has_model_file = True
+                break
+    
+    # Check for adapter config (LoRA marker)
+    adapter_config = os.path.join(model_path, "adapter_config.json")
+    has_adapter = os.path.exists(adapter_config)
+    
+    # FullFT if: path marker OR (has model file AND no adapter)
+    is_fullft = has_fullft_marker or (has_model_file and not has_adapter)
+    
+    return is_fullft
+
+
 def load_model_and_processor(eval_args: CIRREvalArguments, model_args: ModelArguments, data_args: DataArguments):
     """Load model and processor with proper error handling"""
     print_master("=" * 60)
@@ -258,6 +287,13 @@ def load_model_and_processor(eval_args: CIRREvalArguments, model_args: ModelArgu
     # 先确定潜在的 adapter / config 路径
     local_config_path = os.path.join(eval_args.model_path, "config.json")
     adapter_config_path = os.path.join(eval_args.model_path, "adapter_config.json")
+    
+    # Detect full fine-tuning checkpoint
+    is_fullft = detect_fullft_checkpoint(eval_args.model_path)
+    if is_fullft:
+        print_master(f"🔍 Detected FULL FINE-TUNING checkpoint")
+    else:
+        print_master(f"🔍 Detected LoRA or standard checkpoint")
 
     # 优先：如果是 LoRA，则直接读取 adapter_config，避免先推测再覆盖的冗余日志
     base_model_name = None
@@ -337,24 +373,29 @@ def load_model_and_processor(eval_args: CIRREvalArguments, model_args: ModelArgu
             print_master(f"❌ LoRA model loading failed: {e}")
             raise
     else:
-        print_master("Loading full model from local checkpoint (non-LoRA)...")
+        # Choose model class based on fullft detection
+        ModelClass = MMEBModelFullFT if is_fullft else MMEBModel
+        model_type_str = "FULL FINE-TUNED" if is_fullft else "full"
+        
+        print_master(f"Loading {model_type_str} model from local checkpoint (non-LoRA)...")
         try:
-            model = MMEBModel.load(model_args, is_trainable=False)
+            model = ModelClass.load(model_args, is_trainable=False)
             model.eval()
-            print_master("✅ Model loaded successfully from local checkpoint")
+            print_master(f"✅ {model_type_str} model loaded successfully from local checkpoint")
         except Exception as e:
-            print_master(f"MMEBModel.load failed: {e}")
+            print_master(f"{ModelClass.__name__}.load failed: {e}")
             print_master("Trying build + manual weight load fallback...")
             try:
                 original_checkpoint = model_args.checkpoint_path
                 model_args.checkpoint_path = None
-                model = MMEBModel.build(model_args)
+                model = ModelClass.build(model_args)
                 weight_file = None
                 if os.path.isdir(eval_args.model_path):
-                    for f in ["pytorch_model.bin", "model.safetensors", "model.bin"]:
+                    for f in ["model.safetensors", "pytorch_model.bin", "model.bin"]:
                         fp = os.path.join(eval_args.model_path, f)
                         if os.path.exists(fp):
                             weight_file = fp; break
+                
                 if weight_file:
                     print_master(f"Loading weights from: {weight_file}")
                     if weight_file.endswith('.safetensors'):
@@ -365,10 +406,18 @@ def load_model_and_processor(eval_args: CIRREvalArguments, model_args: ModelArgu
                                 sd[k] = sf.get_tensor(k)
                     else:
                         sd = torch.load(weight_file, map_location='cpu')
+                    
+                    # For full fine-tuning, state_dict keys should have 'encoder.' prefix
+                    if is_fullft and not any(k.startswith('encoder.') for k in sd.keys()):
+                        print_master("[FullFT] Adding 'encoder.' prefix to state_dict keys")
+                        sd = {'encoder.' + k: v for k, v in sd.items()}
+                    
                     model.load_state_dict(sd, strict=False)
                     print_master("✅ Weights loaded into built model")
                 else:
-                    raise ValueError(f"No weight file found in {eval_args.model_path}")
+                    err_msg = f"未在 {eval_args.model_path} 中找到可加载的模型权重文件 (adapter_model.safetensors/adapter_model.bin/model.safetensors/pytorch_model.bin)."
+                    print_master(f"❌ {err_msg}")
+                    raise ValueError(err_msg)
                 model_args.checkpoint_path = original_checkpoint
             except Exception as e2:
                 print_master(f"❌ All loading methods failed: {e2}")

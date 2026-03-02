@@ -9,10 +9,23 @@ from src.arguments import DataArguments, ModelArguments, TrainingArguments
 import torch
 from qwen_vl_utils import smart_resize
 
-from src.model.processor import LLAVA_NEXT, QWEN2_VL, QWEN2_5_VL, \
-    QWEN2_VL_TOKENSELECTION, QWEN2_5_VL_TOKENSELECTION, PHI3V, process_vlm_inputs_fns
+from src.model.processor import (
+    LLAVA_NEXT,
+    QWEN2_VL,
+    QWEN2_5_VL,
+    QWEN2_VL_TOKENSELECTION,
+    QWEN2_5_VL_TOKENSELECTION,
+    PHI3V,
+    GME,
+    LamRA,
+    LamRA_QWEN2_5,
+    GME_CIRR_QUERY_INSTRUCTION,
+    process_vlm_inputs_fns,
+)
 from PIL import Image
 import io
+import hashlib
+import builtins
 from src.utils import print_rank, print_master
 import os
 import psutil
@@ -146,7 +159,7 @@ class MultimodalDataCollator:
         self.long_text_count = 0
         self.total_text_count = 0
 
-    def _get_batch_inputs(self, batch, text_keyname, image_keyname):
+    def _get_batch_inputs(self, batch, text_keyname, image_keyname, input_type: str = "query"):
         texts, visual_inputs = [], []
         
         for batch_idx, example in enumerate(batch):
@@ -199,6 +212,12 @@ class MultimodalDataCollator:
             visual_inputs.append(visual_input)
     
         inputs = {'text': texts, 'images': visual_inputs}
+        if self.training_args.model_backbone in [GME, LamRA, LamRA_QWEN2_5]:
+            inputs['is_query'] = (input_type == "query")
+            if input_type == "query":
+                inputs['instruction'] = GME_CIRR_QUERY_INSTRUCTION
+            else:
+                inputs['instruction'] = None
         return inputs
 
     def _load_image(self, bytes_data, path):
@@ -219,8 +238,8 @@ class MultimodalDataCollator:
     def __call__(self, examples):
         """保持原有逻辑不变"""
         try:
-            qry_inputs = self._get_batch_inputs(examples, "query_text", "query_image")
-            pos_inputs = self._get_batch_inputs(examples, "pos_text", "pos_image")
+            qry_inputs = self._get_batch_inputs(examples, "query_text", "query_image", input_type="query")
+            pos_inputs = self._get_batch_inputs(examples, "pos_text", "pos_image", input_type="target")
             bs = len(qry_inputs['text'])
             assert bs > 0, 'An empty batch'
             
@@ -254,11 +273,14 @@ class MultimodalDataCollator:
             
             ref_ids = []
             aug_flags = []
+            anchor_ids = []
             for e in examples:
                 ref_ids.append(int(e.get("reference_id", -1)))
                 aug_flags.append(bool(e.get("is_augmented", False)))
+                anchor_ids.append(self._anchor_group_id(e))
             processed_qry_inputs["reference_ids"] = torch.as_tensor(ref_ids, dtype=torch.long)
             processed_qry_inputs["is_augmented"] = torch.as_tensor(aug_flags, dtype=torch.bool)
+            processed_qry_inputs["anchor_group_ids"] = torch.as_tensor(anchor_ids, dtype=torch.long)
 
             return processed_qry_inputs, processed_pos_inputs
             
@@ -266,3 +288,30 @@ class MultimodalDataCollator:
             print_rank(f"❌ Collator error: {e}")
             print_rank(f"📊 Stats - Total texts: {self.total_text_count}, Truncated: {self.long_text_count}")
             raise
+
+    def _anchor_group_id(self, example) -> int:
+        """
+        Stable hash for (reference_image, original_mod_text) grouping.
+        Falls back to -1 when no anchor text is available.
+        """
+        if not builtins.isinstance(example, dict):
+            return -1
+        anchor = example.get("augmentation_group_key")
+        if not anchor:
+            anchor = example.get("original_mod_text")
+        if anchor is None:
+            return -1
+        if not builtins.isinstance(anchor, str):
+            anchor = str(anchor)
+        anchor = anchor.strip()
+        if not anchor:
+            return -1
+        ref = example.get("reference_image", "")
+        if not builtins.isinstance(ref, str):
+            ref = str(ref) if ref is not None else ""
+        composite = f"{ref}||{anchor}"
+        digest = hashlib.sha1(composite.encode("utf-8")).hexdigest()
+        # take lower 16 hex digits (~64 bits) to stay within int64 range
+        anchor_id = int(digest[-16:], 16)
+        anchor_id &= (1 << 63) - 1  # ensure positive int64
+        return anchor_id

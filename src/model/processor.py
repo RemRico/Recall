@@ -38,6 +38,10 @@ LamRA = 'lamra'  # QWEN2-VL
 LamRA_QWEN2_5 = 'lamra_qwen25'  # QWEN2.5-VL
 COLPALI = 'colpali'  # PaliGemma-3B
 E5_V = 'e5_v'  # Llava_next
+GME_DEFAULT_SYSTEM_INSTRUCTION = "You are a helpful assistant."
+GME_CIRR_QUERY_INSTRUCTION = (
+    "Retrieve a day-to-day image that aligns with the modification instructions of the provided image."
+)
 MODEL2BACKBONE = {  # keys are from hf_config.model_type or manually added if not provided
     'phi3_v': PHI3V,
     'llava_next': LLAVA_NEXT,
@@ -506,10 +510,30 @@ def Qwen2_VL_process_fn(model_inputs: dict, processor: Qwen2VLProcessor, max_len
     return inputs
 
 def Gme_process_fn(model_inputs: dict, processor: Qwen2VLProcessor, max_length=None):
+    texts = model_inputs.get('text', [])
+    images = model_inputs.get('images', [])
+    instruction = model_inputs.get('instruction')
+    is_query = model_inputs.get('is_query', True)
+
+    if isinstance(instruction, list):
+        unique_instructions = [ins for ins in instruction if ins is not None]
+        unique_instructions = list(dict.fromkeys(unique_instructions))
+        if len(unique_instructions) == 1:
+            instruction = unique_instructions[0]
+        elif len(unique_instructions) == 0:
+            instruction = None
+        else:
+            raise ValueError(
+                f"GME expects a single instruction per batch, but got multiple values: {unique_instructions}"
+            )
+
     inputs = {
-        'texts': model_inputs['text'],
-        'images': model_inputs['images'],
+        'texts': texts,
+        'images': images,
+        'is_query': is_query,
     }
+    if instruction is not None:
+        inputs['instruction'] = instruction
     return inputs
 
 
@@ -734,8 +758,8 @@ def qwen_retrieval_prompt_template(text, add_video_token, add_image_token):
                      "compact embedding for nearest-neighbor retrieval in a shared space.")
     input_str = ""
     if add_image_token:
-        input_str += "<|vision_start|><|image_pad|><|vision_end|>"
-        # input_str += "<|image_pad|>"
+        # input_str += "<|vision_start|><|image_pad|><|vision_end|>"
+        input_str += "<|image_pad|>"
     if add_video_token:
         input_str += "<|vision_start|><|video_pad|><|vision_end|>"
     if text:
@@ -764,10 +788,12 @@ def process_input_text(instruction, model_backbone, text=None, add_video_token=F
             combined_text = (combined_text + " " + text) if combined_text else text
         return PROMPT_TEMPLATE_DICT[model_backbone](combined_text, add_video_token, add_image_token)
     elif model_backbone in [GME, LamRA, LamRA_QWEN2_5]:
+        parts = []
+        if instruction:
+            parts.append(instruction)
         if text:
-            return instruction + " " + text # GME and LamRA do not need special tokens
-        else:
-            return instruction + " "
+            parts.append(text)
+        return " ".join(parts)
     elif model_backbone == E5_V:
         # e5_v 模板沿用原逻辑
         return PROMPT_TEMPLATE_DICT[model_backbone](text, add_video_token, add_image_token)

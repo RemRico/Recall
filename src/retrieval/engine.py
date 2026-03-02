@@ -18,7 +18,13 @@ except Exception:
     process_input_text = None  # 我们会在用到时显式报错
 
 # VLM2Vec 官方 processor 映射
-from src.model.processor import process_vlm_inputs_fns  # type: ignore
+from src.model.processor import (
+    process_vlm_inputs_fns,  # type: ignore
+    GME,
+    LamRA,
+    LamRA_QWEN2_5,
+    GME_CIRR_QUERY_INSTRUCTION,
+)
 
 from .embedding_cache import EmbeddingCache
 
@@ -388,6 +394,13 @@ class RetrievalEngine:
 
         try:
             model_inputs = {"text": proc_texts, "images": images}
+            if model_backbone in {GME, LamRA, LamRA_QWEN2_5}:
+                is_query = input_type == "query"
+                model_inputs["is_query"] = is_query
+                if is_query:
+                    model_inputs["instruction"] = GME_CIRR_QUERY_INSTRUCTION
+                else:
+                    model_inputs["instruction"] = None
             if model_backbone not in process_vlm_inputs_fns:
                 raise ValueError(f"Model backbone {model_backbone} not supported in VLM2Vec")
             inputs = process_vlm_inputs_fns[model_backbone](model_inputs, processor)

@@ -212,13 +212,28 @@ def _build_submissions(test_queries: List[Dict],
         names = [candidate_images[idx] for idx in indices]
         pairid_to_predictions[pairid] = names
 
-        # 组内 Top-3，按全局排序过滤
+        # 组内 Top-3：直接在所属分组内部按相似度排序，确保提交的列表始终覆盖组成员
         img_set = q.get('img_set', {})
         members = img_set.get('members', []) if isinstance(img_set, dict) else (img_set or [])
+        ref = q.get('reference')
+
+        group_names: List[str] = []
         if members:
-            group_names = [n for n in names if n in members][:3]
-        else:
-            group_names = []
+            group_indices: List[int] = []
+            ordered_members: List[str] = []
+            for member in members:
+                if member == ref:
+                    continue  # 官方评测不应包含引用图
+                if member in image_to_idx:
+                    group_indices.append(image_to_idx[member])
+                    ordered_members.append(member)
+
+            if group_indices:
+                group_scores = sims[qi, group_indices]
+                top_g = min(3, len(group_indices))
+                top_indices = torch.topk(group_scores, k=top_g, dim=0, largest=True).indices.tolist()
+                group_names = [ordered_members[idx] for idx in top_indices]
+
         pairid_to_group_predictions[pairid] = group_names
 
     return pairid_to_predictions, pairid_to_group_predictions
@@ -344,10 +359,10 @@ python cirr_test_submission.py \
 
 2) 分布式（例如 8 卡）
 CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 torchrun --nproc_per_node=8 cirr_test_submission.py \
-  --model_path ./experiments/IterativeCIRR_qwen2_5vl_7b_20251012_004205_copy_gruopsamplerfix/training_iter_1/checkpoint-2000 \
+  --model_path experiments/IterativeCIRR_qwen2_5vl_7b_20260126_193416_r64/training_iter_0/checkpoint-3500 \
   --batch_size 8 \
   --device cuda \
   --distributed True \
-  --submission_name base_model_cirr_test \
+  --submission_name qwen2.5vl_cirr_base_ckpt3500_r64\
   --output_dir ./submission/CIRR
 """

@@ -187,6 +187,10 @@ class MMEBTrainer(Trainer):
                 # 调试开关：可通过 TrainingArguments 传入 sampler_debug / sampler_debug_max_batches
                 debug=bool(getattr(self.args, 'sampler_debug', True)),
                 debug_max_batches=int(getattr(self.args, 'sampler_debug_max_batches', 5)),
+                debug_preview_groups=int(getattr(self.args, 'sampler_debug_preview_groups', 3)),
+                debug_preview_items=int(getattr(self.args, 'sampler_debug_preview_items', 3)),
+                debug_preview_chars=int(getattr(self.args, 'sampler_debug_preview_chars', 80)),
+                debug_preview_small_max_size=int(getattr(self.args, 'sampler_debug_preview_small_max_size', 4)),
             )
 
         # 非分组路径：标准 DistributedSampler

@@ -110,6 +110,9 @@ class IterativeCIRRDataset(IterativeRetrievalDataset):
         )
 
         ref_full_path = self._get_full_image_path(ref_image_path)
+        original_mod_text = sample.get("caption", "")
+        if isinstance(original_mod_text, str):
+            original_mod_text = original_mod_text.strip()
         return {
             "query_text": query_text,
             "query_image": self._load_image(ref_image_path),
@@ -121,6 +124,7 @@ class IterativeCIRRDataset(IterativeRetrievalDataset):
             # 关键：统一规范化 reference_image，确保与增强样本一致，从而能被 sampler 分到同一组
             "reference_image": ref_full_path,
             "reference_id": self._get_reference_id(ref_full_path),
+            "original_mod_text": original_mod_text,
             "is_augmented": False,
         }
 
@@ -153,6 +157,10 @@ class IterativeCIRRDataset(IterativeRetrievalDataset):
 
         ref_path = self._get_full_image_path(sample["reference_image"])  # 规范化
 
+        original_mod_text = sample.get("original_mod_text", "")
+        if isinstance(original_mod_text, str):
+            original_mod_text = original_mod_text.strip()
+
         return {
             "query_text": query_text,
             "query_image": self._load_image(ref_path),
@@ -162,7 +170,7 @@ class IterativeCIRRDataset(IterativeRetrievalDataset):
             "neg_image": self._load_image(ref_path),
             "global_dataset_name": "CIRR",
             "is_augmented": True,
-            "original_mod_text": sample.get("original_mod_text", ""),
+            "original_mod_text": original_mod_text,
             # 关键：与原始样本相同规则的规范化 reference_image，确保分组一致
             "reference_image": ref_path,
             "reference_id": self._get_reference_id(ref_path),

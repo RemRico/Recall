@@ -148,15 +148,30 @@ class Qwen2VLImageProcessor(BaseImageProcessor):
     ) -> None:
         super().__init__(**kwargs)
         if size is None:
-            size = {"shortest_edge": 56 * 56, "longest_edge": 28 * 28 * 1280}
-        elif size is not None and ("shortest_edge" not in size or "longest_edge" not in size):
-            raise ValueError("size must contain 'shortest_edge' and 'longest_edge' keys.")
-        # backward compatibility: override size with min_pixels and max_pixels if they are provided
-        # @ruimeng: use  min_pixels/max_pixels only when size is not provided
-        if not size and min_pixels is not None:
-            size["shortest_edge"] = min_pixels
-        if not size and max_pixels is not None:
-            size["longest_edge"] = max_pixels
+            size = {}
+        else:
+            size = size.copy()
+
+        # backward compatibility: 若缺少标准键，尝试从旧配置字段推导
+        if "shortest_edge" not in size:
+            if "min_pixels" in size and size["min_pixels"] is not None:
+                size["shortest_edge"] = int(size["min_pixels"])
+            elif min_pixels is not None:
+                size["shortest_edge"] = int(min_pixels)
+            else:
+                size["shortest_edge"] = 56 * 56
+        if "longest_edge" not in size:
+            if "max_pixels" in size and size["max_pixels"] is not None:
+                size["longest_edge"] = int(size["max_pixels"])
+            elif max_pixels is not None:
+                size["longest_edge"] = int(max_pixels)
+            else:
+                size["longest_edge"] = 28 * 28 * 1280
+
+        # 保留旧字段，方便序列化
+        size.setdefault("min_pixels", size["shortest_edge"])
+        size.setdefault("max_pixels", size["longest_edge"])
+
         self.min_pixels = size["shortest_edge"]
         self.max_pixels = size["longest_edge"]
         self.size = size

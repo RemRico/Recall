@@ -1,6 +1,6 @@
 import random
 from collections import defaultdict
-from typing import List, Dict, Iterator, Optional, Tuple
+from typing import Any, List, Dict, Iterator, Optional, Tuple
 
 import torch
 from torch.utils.data import Sampler, Dataset
@@ -10,7 +10,8 @@ import torch.distributed as dist
 class DistributedGroupedBatchSampler(Sampler[List[int]]):
     """
     DDP-friendly 分组打包采样器：
-      - 先按 reference_image 分组
+      - 默认按 reference_image 分组；若样本提供 original_mod_text/augmentation_group_key，
+        则按 (reference_image, anchor_text) 进一步拆分，避免同图下大批量堆叠
       - 全局洗牌 + 打包成 batch（每个 batch 的样本数 <= batch_size）
       - 按 rank 对 batch 列表进行均匀切片（i % world_size == rank）
       - 可选：将不足 batch_size 的 batch 进行“就地重复”补齐到定长
@@ -31,6 +32,10 @@ class DistributedGroupedBatchSampler(Sampler[List[int]]):
         # 调试参数（可选）
         debug: bool = False,
         debug_max_batches: int = 5,
+        debug_preview_groups: int = 3,
+        debug_preview_items: int = 3,
+        debug_preview_chars: int = 80,
+        debug_preview_small_max_size: int = 4,
     ):
         super().__init__(dataset)
         self.dataset = dataset
@@ -44,6 +49,13 @@ class DistributedGroupedBatchSampler(Sampler[List[int]]):
         # 新增：调试参数
         self.debug = bool(debug)
         self.debug_max_batches = int(debug_max_batches)
+        self.debug_preview_groups = max(0, int(debug_preview_groups))
+        self.debug_preview_items = max(1, int(debug_preview_items))
+        self.debug_preview_chars = max(8, int(debug_preview_chars))
+        self.debug_preview_small_max_size = max(0, int(debug_preview_small_max_size))
+        self.preview_cache_char_limit = max(self.debug_preview_chars, 120)
+        self.preview_cache: Optional[Dict[int, Dict[str, Any]]] = {} if self.debug else None
+        self.index_to_group_idx: Optional[Dict[int, int]] = None
 
         # DDP info
         if world_size is None or rank is None:
@@ -66,7 +78,7 @@ class DistributedGroupedBatchSampler(Sampler[List[int]]):
         self.index_is_augmented: Dict[int, bool] = {}
 
         # 1) 分组（一次性）
-        groups: Dict[str, List[int]] = defaultdict(list)
+        raw_groups: Dict[object, List[int]] = defaultdict(list)
         for i in range(len(self.dataset)):
             try:
                 ex = self.dataset[i]
@@ -78,18 +90,32 @@ class DistributedGroupedBatchSampler(Sampler[List[int]]):
                 # 记录是否增广
                 self.index_is_augmented[i] = bool(ex.get("is_augmented", False))
 
-                ref = ex.get(self.ref_key)
-                if ref:
-                    groups[ref].append(i)
-                else:
-                    groups[self.no_ref_bucket].append(i)
+                group_key = self._build_group_key(ex)
+                raw_groups[group_key].append(i)
+                if self.preview_cache is not None:
+                    self.preview_cache[i] = self._build_preview_payload(ex)
             except Exception as e:
                 # 静默容错：跳过坏样本
                 # 也可以 log warning
                 continue
 
-        self.groups: List[List[int]] = list(groups.values())
+        self.group_keys: List[object] = []
+        self.groups: List[List[int]] = []
+        self.group_base_refs: List[str] = []
+        self.reference_to_group_indices: Dict[str, List[int]] = defaultdict(list)
+        for key, members in raw_groups.items():
+            gi = len(self.groups)
+            base_ref = self._base_ref_from_group_key(key)
+            self.group_keys.append(key)
+            self.groups.append(members)
+            self.group_base_refs.append(base_ref)
+            self.reference_to_group_indices[base_ref].append(gi)
         self.num_groups = len(self.groups)
+        if self.debug:
+            self.index_to_group_idx = {}
+            for gi, members in enumerate(self.groups):
+                for sample_idx in members:
+                    self.index_to_group_idx[sample_idx] = gi
 
         # 2) 预缓存一个“本 epoch 的 my_batches”（在 __iter__ 首次构建）
         self._cached_batches = None
@@ -115,6 +141,18 @@ class DistributedGroupedBatchSampler(Sampler[List[int]]):
                 f"[Sampler][rank{self.rank}] groups_built: num_groups={self.num_groups}, total={total}, "
                 f"augmented={total_aug}; group_types: both={both_cnt}, only_aug={only_aug}, only_orig={only_orig}"
             )
+            preview_indices = self._select_preview_group_indices()
+            if preview_indices:
+                print(f"[Sampler][rank{self.rank}] group preview (showing up to {self.debug_preview_groups} buckets; <= {self.debug_preview_small_max_size} items when possible)")
+                for order, gi in enumerate(preview_indices):
+                    key_str = self._format_group_key(self.group_keys[gi])
+                    members = self.groups[gi]
+                    print(f"  group#{order} (idx={gi}) {key_str} size={len(members)}")
+                    for idx in members[: self.debug_preview_items]:
+                        print(f"    {self._preview_sample(idx)}")
+                    if len(members) > self.debug_preview_items:
+                        remain = len(members) - self.debug_preview_items
+                        print(f"    ... +{remain} more")
 
         # 调试：补齐计数器
         self._debug_pad_same_sig = 0
@@ -186,56 +224,228 @@ class DistributedGroupedBatchSampler(Sampler[List[int]]):
             batch.append(rnd.choice(pool))
         return batch
 
+    def _build_group_key(self, ex) -> object:
+        """
+        构造分组键：
+          - 默认按 reference_image 聚合
+          - 若提供 original_mod_text / augmentation_group_key，则与 reference 组成二级分组
+        """
+        ref = None
+        if isinstance(ex, dict):
+            ref = ex.get(self.ref_key)
+        if isinstance(ref, str):
+            base_key = ref
+        elif ref is not None:
+            base_key = str(ref)
+        else:
+            base_key = self.no_ref_bucket
+
+        anchor = self._extract_anchor_text(ex)
+        if anchor:
+            return (base_key, anchor)
+        return base_key
+
+    def _base_ref_from_group_key(self, key: object) -> str:
+        if isinstance(key, tuple) and len(key) >= 1:
+            base = key[0]
+        else:
+            base = key
+        if isinstance(base, str):
+            return base
+        return str(base)
+
+    def _extract_anchor_text(self, ex) -> Optional[str]:
+        if not isinstance(ex, dict):
+            return None
+        candidates = (
+            ex.get("augmentation_group_key"),
+            ex.get("original_mod_text"),
+        )
+        for cand in candidates:
+            if isinstance(cand, str):
+                stripped = cand.strip()
+                if stripped:
+                    return stripped
+        return None
+
+    def _select_preview_group_indices(self) -> List[int]:
+        if self.num_groups == 0 or self.debug_preview_groups <= 0:
+            return []
+        selected: List[int] = []
+        if self.debug_preview_small_max_size > 0:
+            for gi, members in enumerate(self.groups):
+                if len(members) <= self.debug_preview_small_max_size:
+                    selected.append(gi)
+                if len(selected) >= self.debug_preview_groups:
+                    break
+        if not selected:
+            limit = min(self.debug_preview_groups, self.num_groups)
+            selected = list(range(limit))
+        return selected
+
+    def _build_preview_payload(self, ex: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "is_aug": bool(ex.get("is_augmented", False)),
+            "reference": self._sanitize_path(ex.get(self.ref_key)),
+            "anchor": self._sanitize_text(self._extract_anchor_text(ex)),
+            "mod_text": self._sanitize_text(ex.get("modification_text")),
+            "orig_mod_text": self._sanitize_text(ex.get("original_mod_text")),
+            "caption": self._sanitize_text(ex.get("caption")),
+            "target": self._sanitize_path(self._extract_target_path(ex)),
+        }
+
+    def _preview_sample(self, idx: int, max_chars: Optional[int] = None) -> str:
+        info: Optional[Dict[str, Any]] = None
+        if self.preview_cache is not None:
+            info = self.preview_cache.get(idx)
+        if info is None:
+            try:
+                ex = self.dataset[idx]
+            except Exception as exc:
+                return f"idx={idx} !{exc}"
+            info = self._build_preview_payload(ex)
+            if self.preview_cache is not None:
+                self.preview_cache[idx] = info
+        return self._format_preview(idx, info, max_chars=max_chars)
+
+    def _format_preview(self, idx: int, info: Dict[str, Any], max_chars: Optional[int] = None) -> str:
+        limit = max_chars if max_chars is not None else self.debug_preview_chars
+        if limit < 4:
+            limit = 4
+        parts = [f"idx={idx}", "aug" if info.get("is_aug") else "orig"]
+        reference = info.get("reference")
+        if reference:
+            parts.append(f"ref={self._short_path(reference)}")
+        anchor = info.get("anchor")
+        if anchor:
+            parts.append(f"anchor={self._truncate(anchor, limit)}")
+        mod_text = info.get("mod_text")
+        caption = info.get("caption")
+        orig_mod = info.get("orig_mod_text")
+        if mod_text:
+            parts.append(f"mod={self._truncate(mod_text, limit)}")
+        elif caption:
+            parts.append(f"cap={self._truncate(caption, limit)}")
+        if orig_mod and (not mod_text or orig_mod != mod_text):
+            parts.append(f"orig={self._truncate(orig_mod, limit)}")
+        target = info.get("target")
+        if target:
+            parts.append(f"tgt={self._short_path(target)}")
+        return " | ".join(parts)
+
+    def _truncate(self, text: str, limit: int) -> str:
+        if not text:
+            return ""
+        clean = str(text).replace("\n", " ").replace("\t", " ").strip()
+        if len(clean) <= limit:
+            return clean
+        if limit <= 3:
+            return clean[:limit]
+        return clean[: limit - 3] + "..."
+
+    def _short_path(self, path: str) -> str:
+        if not path:
+            return ""
+        normalized = str(path).replace("\\", "/").strip().rstrip("/")
+        parts = [p for p in normalized.split("/") if p]
+        if not parts:
+            return normalized
+        if len(parts) >= 2:
+            return "/".join(parts[-2:])
+        return parts[-1]
+
+    def _sanitize_text(self, value: Optional[Any]) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, str):
+            text = value.strip()
+        else:
+            text = str(value).strip()
+        return self._truncate(text, self.preview_cache_char_limit)
+
+    def _sanitize_path(self, value: Optional[Any]) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, str):
+            path = value.strip()
+        else:
+            path = str(value).strip()
+        return self._truncate(path, self.preview_cache_char_limit)
+
+    def _extract_target_path(self, ex) -> str:
+        if not isinstance(ex, dict):
+            return ""
+        target = ex.get("target_image")
+        if isinstance(target, str):
+            return target
+        pos_image = ex.get("pos_image")
+        if pos_image:
+            path = self._extract_path_from_image_dict(pos_image)
+            if path:
+                return path
+        return ""
+
+    def _extract_path_from_image_dict(self, image_dict) -> str:
+        if not isinstance(image_dict, dict):
+            return ""
+        paths = image_dict.get("paths")
+        if isinstance(paths, (list, tuple)) and paths:
+            first = paths[0]
+            if isinstance(first, str):
+                return first
+        return ""
+
+    def _format_group_key(self, key: object) -> str:
+        if isinstance(key, tuple) and len(key) == 2:
+            base = self._short_path(key[0])
+            anchor = self._truncate(str(key[1]), self.debug_preview_chars)
+            return f"ref={base} | anchor={anchor}"
+        if isinstance(key, str):
+            return f"ref={self._short_path(key)}"
+        return f"ref={str(key)}"
+
     def _build_all_batches(self):
         """
         基于当前 epoch 构建全局 batch 列表，然后切片到本 rank。
         """
-        # 洗牌 groups 的顺序（全局一致）
-        group_indices = list(range(self.num_groups))
+        # 洗牌 groups 的顺序（全局一致），同时优先保持相同 reference 的小组相邻
         if self.shuffle:
             rnd = random.Random(self.seed + self.epoch)
-            rnd.shuffle(group_indices)
+            ref_order = list(self.reference_to_group_indices.keys())
+            rnd.shuffle(ref_order)
+        else:
+            rnd = None
+            ref_order = list(self.reference_to_group_indices.keys())
 
-        # 打包：<= batch_size
+        group_indices: List[int] = []
+        for ref in ref_order:
+            per_ref_groups = list(self.reference_to_group_indices[ref])
+            if self.shuffle and rnd is not None:
+                rnd.shuffle(per_ref_groups)
+            group_indices.extend(per_ref_groups)
+
+        # 打包：<= batch_size，先累积再切片，避免在 epoch 内重复采样
         batches: List[List[int]] = []
-        cur: List[int] = []
-        cur_sz = 0
+        pending: List[int] = []
         for gi in group_indices:
-            g = self.groups[gi]
-            gsz = len(g)
+            pending.extend(self.groups[gi])
+            while len(pending) >= self.batch_size:
+                batch = pending[: self.batch_size]
+                batches.append(batch)
+                pending = pending[self.batch_size :]
 
-            # 如果加入会超标且当前已有样本，则先收一个 batch
-            if cur_sz > 0 and (cur_sz + gsz) > self.batch_size:
-                batches.append(cur)
-                cur = []
-                cur_sz = 0
-
-            # 加入当前组
-            cur.extend(g)
-            cur_sz += gsz
-
-            # 刚好等于也收一个 batch
-            if cur_sz == self.batch_size:
-                batches.append(cur)
-                cur = []
-                cur_sz = 0
-
-        # 末尾残留
-        if cur:
-            # 不足的情况：根据配置 pad 或 drop
-            if cur_sz < self.batch_size:
-                if self.drop_last:
-                    pass  # 丢弃
-                elif self.pad_to_full and cur_sz > 0:
-                    # 去重式补齐（优先同结构再全局）
-                    rnd = random.Random(self.seed + self.epoch + 2024)
-                    cur = self._pad_unique(cur, self.batch_size, rnd)
-                    batches.append(cur)
-                else:
-                    # 保持不满（不推荐用于 DDP 对比学习）
-                    batches.append(cur)
+        # 末尾残留（不足 batch_size）
+        if pending:
+            if self.drop_last:
+                pending = []
+            elif self.pad_to_full:
+                rnd = random.Random(self.seed + self.epoch + 2024)
+                padded = self._pad_unique(list(pending), self.batch_size, rnd)
+                batches.append(padded)
+                pending = []
             else:
-                batches.append(cur)
+                batches.append(list(pending))
+                pending = []
 
         # === 关键：按 rank 均匀切片 ===
         my_batches = [b for i, b in enumerate(batches) if (i % self.world_size) == self.rank]
@@ -273,8 +483,20 @@ class DistributedGroupedBatchSampler(Sampler[List[int]]):
                     total_aug_items += aug_count
                     if aug_count > 0:
                         batches_with_aug += 1
+                    sample_snippets = ", ".join(
+                        self._preview_sample(idx, max_chars=self.debug_preview_chars)
+                        for idx in b[: self.debug_preview_items]
+                    )
+                    if len(b) > self.debug_preview_items:
+                        sample_snippets = f"{sample_snippets}, ..."
+                    group_hint = ""
+                    if self.index_to_group_idx is not None and b:
+                        first_idx = b[0]
+                        gi = self.index_to_group_idx.get(first_idx)
+                        if gi is not None:
+                            group_hint = f", group_key={self._format_group_key(self.group_keys[gi])}"
                     preview_lines.append(
-                        f"  batch[{bi}] size={len(b)}, aug={aug_count}, ids_sample={b[:min(3, len(b))]}"
+                        f"  batch[{bi}] size={len(b)}, aug={aug_count}{group_hint}, samples=[{sample_snippets}]"
                     )
                 if num_batches > self.debug_max_batches:
                     for b in my_batches[self.debug_max_batches:]:

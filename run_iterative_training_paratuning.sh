@@ -7,8 +7,8 @@
 #   ./run_iterative_training_r16_d01.sh cirr qwen2vl 2
 #   ./run_iterative_training_r16_d01.sh cirr qwen2vl 8
 #   ./run_iterative_training_r16_d01.sh cirr qwen2vl 2 ./experiments/IterativeCIRR_qwen2vl_20250805_000011
-#   bash ./run_iterative_training_paratuning.sh cirr qwen2_5vl_7b 1 ./experiments/IterativeCIRR_qwen2_5vl_7b_20251012_004205_copy_gruopsamplerfix_copy_triplet_loss_i0_t1
-# Notes:
+#   bash ./run_iterative_training_paratuning.sh cirr qwen2_5vl_7b 8 ./experiments/IterativeCIRR_qwen2_5vl_7b_20251012_004205_copy_gruopsamplerfix_copy_triplet_loss_i0_t1
+#   bash ./run_iterative_training_paratuning.sh cirr qwen2_5vl_7b 8 ./experiments/IterativeCIRR_qwen2_5vl_7b_20251012_004205_continue_test_new_eval
 # - This script uses LoRA with r=16, dropout=0.1 and (default) alpha=32 (override via $LORA_ALPHA).
 # - Iterative training with grouped-by-reference-image sampler remains enabled.
 
@@ -19,9 +19,10 @@ DATASET=${1:-"cirr"}             # cirr | fashioniq
 MODEL_TYPE=${2:-"qwen2vl"}       # qwen2vl | qwen2vl_2b | llava_next
 NUM_GPUS=${3:-2}                 # default 2 GPUs
 EXISTING_EXP_DIR=${4:-""}        # optional: resume from existing experiment dir
+EXTRA_TRAIN_ARGS=${EXTRA_TRAIN_ARGS:-""}  # optional: pass-through flags to train_iterative.py
 
 # LoRA settings for this script
-LORA_R=16
+LORA_R=64
 LORA_DROPOUT=0.1
 
 # Local model paths
@@ -147,7 +148,7 @@ if (( NUM_GPUS > 1 )); then
     dataloader_workers=6
     cuda_devices="0,1,2,3"
   elif (( NUM_GPUS == 8 )); then
-    per_device_batch_size=9
+    per_device_batch_size=8
     gradient_accumulation=1
     dataloader_workers=8
     cuda_devices="0,1,2,3,4,5,6,7"
@@ -178,8 +179,8 @@ if (( NUM_GPUS > 1 )); then
     --pooling eos \
     --normalize True \
     --temperature 0.02 \
-    --info_nce_weight 0.9 \
-    --triplet_loss_weight 0.1 \
+    --info_nce_weight 1 \
+    --triplet_loss_weight 0 \
     --triplet_margin 0.05 \
     --dataset_config \"$CONFIG_FILE\" \
     --run_name \"$EXP_NAME\" \
@@ -193,10 +194,9 @@ if (( NUM_GPUS > 1 )); then
     --lr_scheduler_type cosine \
     --learning_rate 2e-5 \
     --warmup_ratio 0.1 \
-    --save_steps 3000 \
+    --save_steps 500 \
     --logging_steps 50 \
     --logging_dir \"$EXP_DIR/logs\" \
-    --eval_steps 1000 \
     --save_safetensors True \
     --remove_unused_columns False \
     --resume_from none \
@@ -215,6 +215,7 @@ if (( NUM_GPUS > 1 )); then
     --max_grad_norm 1.0 \
     --group_by_reference_image \
     --report_to none \
+    $EXTRA_TRAIN_ARGS \
     2>&1 | tee \"$LOG_FILE\""
 else
   # Single-GPU
@@ -228,9 +229,9 @@ else
     --pooling eos \
     --normalize True \
     --temperature 0.02 \
-    --info_nce_weight 0.15 \
-    --triplet_loss_weight 1.0 \
-    --triplet_margin 0.2 \
+    --info_nce_weight 0.8 \
+    --triplet_loss_weight 0.2 \
+    --triplet_margin 0.05 \
     --dataset_config \"$CONFIG_FILE\" \
     --run_name \"$EXP_NAME\" \
     --project_name \"$WANDB_PROJECT\" \
@@ -246,7 +247,6 @@ else
     --save_steps 500 \
     --logging_steps 50 \
     --logging_dir \"$EXP_DIR/logs\" \
-    --eval_steps 1000 \
     --save_safetensors True \
     --remove_unused_columns False \
     --resume_from none \
@@ -265,6 +265,7 @@ else
     --max_grad_norm 1.0 \
     --report_to none \
     --group_by_reference_image \
+    $EXTRA_TRAIN_ARGS \
     2>&1 | tee \"$LOG_FILE\""
 fi
 

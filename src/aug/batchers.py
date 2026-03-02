@@ -1,5 +1,6 @@
 # aug/batchers.py
 from src.utils import print_rank
+from src.prompt.qwen import builder_minimal
 
 
 class CaptionBatcher:
@@ -40,14 +41,36 @@ class CaptionBatcher:
     def _generate_qwen_batch(self, ref_images, target_images, prompts, processor, device):
         """批量使用 Qwen 生成文本"""
         results = []
+        prompt_mode = getattr(self.model_args, "foundation_prompt_mode", "minimal")
+
         for ref_img, tgt_img, prompt in zip(ref_images, target_images, prompts):
-            try:
-                inputs = self.prepare_fns["qwen"](ref_img, tgt_img, prompt, processor, device)
-                text = self.generate_fns["qwen"](inputs, device, self.foundation_model)
-                results.append(text)
-            except Exception as e:
-                print_rank(f"Error in Qwen batch: {e}")
-                results.append(None)
+            text_out = None
+            if prompt_mode == "minimal":
+                try:
+                    minimal_result = builder_minimal.run_minimal_pipeline(
+                        ref_img,
+                        tgt_img,
+                        prompt,
+                        processor,
+                        device,
+                        self.foundation_model,
+                    )
+                    text_out = minimal_result.get("final_text")
+                    if not text_out:
+                        err = minimal_result.get("validation_error", "unknown error")
+                        print_rank(f"[CaptionBatcher] minimal pipeline yielded empty text (reason: {err}); fallback to CoT prompt")
+                except Exception as e:
+                    print_rank(f"[CaptionBatcher] minimal pipeline failed: {e}")
+
+            if text_out is None or text_out == "":
+                try:
+                    inputs = self.prepare_fns["qwen"](ref_img, tgt_img, prompt, processor, device)
+                    text_out = self.generate_fns["qwen"](inputs, device, self.foundation_model)
+                except Exception as e:
+                    print_rank(f"Error in Qwen batch fallback: {e}")
+                    text_out = None
+
+            results.append(text_out)
         return results
 
     def _generate_llava_batch(self, ref_images, target_images, prompts, processor, device):
