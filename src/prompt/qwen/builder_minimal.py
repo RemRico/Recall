@@ -51,9 +51,18 @@ def prepare_inputs_minimal(
     original_text: str,
     processor,
     device: str,
+    dataset_name: str = None,
 ):
-    system_prompt = _read_text_cached(_SYS_TXT)
-    template = _read_text_cached(_TEMPLATE_TXT)
+    # Select prompt files based on dataset
+    if dataset_name == "FashionIQ":
+        sys_txt = os.path.join(_THIS_DIR, "system_prompt_minimal_fashioniq.txt")
+        template_txt = os.path.join(_THIS_DIR, "minimal_template_fashioniq.txt")
+    else:
+        sys_txt = _SYS_TXT
+        template_txt = _TEMPLATE_TXT
+
+    system_prompt = _read_text_cached(sys_txt)
+    template = _read_text_cached(template_txt)
     payload = template.replace("{original_text}", original_text)
 
     conversation: List[Dict] = [
@@ -239,9 +248,10 @@ def run_minimal_pipeline(
     processor,
     device: str,
     foundation_model,
+    dataset_name: str = None,
 ) -> Dict:
     inputs, system_prompt, payload, chat_prompt = prepare_inputs_minimal(
-        ref_image, target_image, original_text, processor, device
+        ref_image, target_image, original_text, processor, device, dataset_name
     )
     raw_text = generate_with_qwen_minimal(inputs, device, foundation_model)
 

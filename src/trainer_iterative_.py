@@ -23,6 +23,8 @@ from .trainer import MMEBTrainer
 from .model.model import MMEBModel
 from src.data.dataset.cirr import IterativeCIRRDataset
 from src.data.dataset.fashioniq import IterativeFashionIQDataset
+from src.evaluation.cirr_evaluator import CIRREvaluator
+from src.evaluation.fashioniq_evaluator import FashionIQEvaluator
 
 # 引入解耦后的功能模块
 from .utils import print_rank, print_master
@@ -1006,36 +1008,44 @@ class IterativeRetrievalTrainer(MMEBTrainer):
             except Exception as e:
                 print_master(f"Failed to read cached evaluation {eval_results_file}: {e}. Re-evaluating.")
 
-        # 2) 准备 evaluator（兼容绝对/相对导入）
+        # 2) 准备 evaluator（根据训练数据集自动选择）
         try:
-            try:
-                from src.evaluation.cirr_evaluator import CIRREvaluator  # 新解耦路径
-            except Exception:
-                from .evaluation.cirr_evaluator import CIRREvaluator    # 旧相对路径兜底
-        except Exception as e:
-            print_master(f"Evaluator import failed: {e}")
-            CIRREvaluator = None
-
-        # 3) 真实评测或回退
-        try:
-            if CIRREvaluator is None:
-                raise RuntimeError("CIRREvaluator is not available")
-
             # 取 processor：优先使用传入到 Trainer 的 processing_class，其次尝试 model.processor
             processor = getattr(self, "processing_class", None) or getattr(self.model, "processor", None)
             if processor is None:
                 print_master("Warning: no processor found on Trainer or model; evaluator may fail.")
 
             eval_bs = 4 if getattr(self, "fast_mode", False) else 8
-            evaluator = CIRREvaluator(
-                model=self.model,
-                processor=processor,
-                data_args=self.data_args,
-                model_args=self.model_args,
-                device=str(getattr(self.args, "device", "cpu")),
-                batch_size=eval_bs,
-            )
-            print_master(f"Real evaluator initialized (batch_size={eval_bs}).")
+
+            dataset_name = str(getattr(self.data_args, "dataset_name", "") or "").strip().lower()
+            dataset_config_name = ""
+            if hasattr(self, "train_dataset") and hasattr(self.train_dataset, "dataset_config"):
+                dataset_config_name = str(self.train_dataset.dataset_config.get("dataset_name", "") or "").strip().lower()
+
+            resolved_dataset_name = dataset_name or dataset_config_name
+
+            if "fashioniq" in resolved_dataset_name:
+                evaluator = FashionIQEvaluator(
+                    model=self.model,
+                    processor=processor,
+                    data_args=self.data_args,
+                    model_args=self.model_args,
+                    device=str(getattr(self.args, "device", "cpu")),
+                    batch_size=eval_bs,
+                )
+                print_master(f"Real FashionIQ evaluator initialized (batch_size={eval_bs}).")
+            else:
+                evaluator = CIRREvaluator(
+                    model=self.model,
+                    processor=processor,
+                    data_args=self.data_args,
+                    model_args=self.model_args,
+                    device=str(getattr(self.args, "device", "cpu")),
+                    batch_size=eval_bs,
+                )
+                print_master(f"Real CIRR evaluator initialized (batch_size={eval_bs}).")
+
+        # 3) 真实评测或回退
 
             # 分布式与否
             world_ok = dist.is_initialized() and dist.get_world_size() > 1

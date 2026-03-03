@@ -1,0 +1,21 @@
+FashionIQ:
+  data_dir: /home/guohaiyun/yty_data/FashionIQ
+  image_base_dir: /home/guohaiyun/yty_data/FashionIQ/images
+  categories: [dress, shirt, toptee]
+  validation:
+    queries_files:
+      dress: captions/cap.dress.val.json
+      shirt: captions/cap.shirt.val.json
+      toptee: captions/cap.toptee.val.json
+  evaluation:
+    batch_size: 16
+    recall_k: [1, 5, 10,50]
+ 
+model:
+  default_backbone: qwen2_vl
+  max_length: 512
+  # Note: Instructions are hardcoded in fashioniq_evaluator.py to match training prompts
+  # Query: "Change the style of this {category} to <{caption}>\nDescribe this modified {category} in one word:"
+  # Target: "Represent the given image in one word:"
+
+

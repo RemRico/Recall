@@ -481,6 +481,7 @@ def main():
             processing_class=processor,
             args=training_args,
             model_args=model_args,
+            data_args=data_args,
             train_dataset=train_dataset,
             data_collator=train_collator,
             max_length=data_args.max_len,

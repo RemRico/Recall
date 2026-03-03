@@ -6,21 +6,32 @@ FashionIQ:
     dataset_split: train
     data_dir: /home/guohaiyun/yty_data/FashionIQ  # base directory (should contain images/ and captions/)
     image_base_dir: /home/guohaiyun/yty_data/FashionIQ  # base directory for images
+    num_sample_per_subset: -1  # Use all samples for production
     weight: 1.0
     
     # Iterative training specific configs
-    max_iterations: 3
+    max_iterations: 2
     hard_neg_collection_freq: 1
-    hard_neg_top_k: 10
-    caption_generation_batch_size: 8
+    hard_neg_top_k: 1
+    caption_generation_batch_size: 32
     
-    # Fast mode settings - ENABLED for quick testing
-    fast_mode: true           # Enable fast mode
-    fast_mode_max_samples: 200  # Limit samples for hard negative mining per round
-    fast_mode_retrieval_db_size: 1000  # Subset candidate pool for quick retrieval
-    fast_mode_max_steps: 20    # Minimal steps per iteration
+    fast_mode: false  # Disable fast mode for production
+    steps_per_iteration: 100  # Steps per iteration (each iteration trains independently)
+    production_save_steps: 50   # Save every 500 steps
+    production_eval_steps: 1000  # Evaluate every 1000 steps
+    production_logging_steps: 50  # Log every 50 steps
     
+    # Fast mode settings - DISABLED for production
+    # fast_mode: true  # Quick testing mode
+    # fast_mode_max_samples: 200  # Limit hard negative samples for quick testing
+    # fast_mode_retrieval_db_size: 100  # Small retrieval database for testing
+    # fast_mode_max_steps: 20  # Minimal steps for testing (per iteration)
+    # fast_mode_save_steps: 10  # Frequent saves for debugging
+    # fast_mode_eval_steps: 15  # Quick evaluation
+    # fast_mode_logging_steps: 2  # Verbose logging for debugging
+
     # Foundation model for caption generation (optional)
-    foundation_model_name: "/home/guohaiyun/yangtianyu/CPRCIR/checkpoints/hf_models/Qwen2-VL-7B-Instruct"
-    foundation_model_temperature: 0.7
-    foundation_model_max_length: 128
+    # foundation_model_name: "/home/guohaiyun/yangtianyu/CPRCIR/checkpoints/hf_models/Qwen2-VL-7B-Instruct"
+    # foundation_model_temperature: 0.7
+    # foundation_model_max_length: 128
+ 

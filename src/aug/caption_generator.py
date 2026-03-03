@@ -211,6 +211,15 @@ class CaptionGenerator:
             return []
 
         device = next(self.foundation_model.parameters()).device
+
+        # Extract dataset name from samples
+        if hard_negatives_batch:
+            first_sample = hard_negatives_batch[0]
+            dataset_name = first_sample.get("global_dataset_name", None)
+            if dataset_name:
+                setattr(self.model_args, "current_dataset_name", dataset_name)
+                print_rank(f"[CaptionGenerator] Detected dataset: {dataset_name}")
+
         ref_images, tgt_images, texts, meta = [], [], [], []
 
         # 打包

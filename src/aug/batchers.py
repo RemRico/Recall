@@ -41,6 +41,9 @@ class CaptionBatcher:
     def _generate_qwen_batch(self, ref_images, target_images, prompts, processor, device):
         """批量使用 Qwen 生成文本"""
         results = []
+
+        # Get dataset name from model_args
+        dataset_name = getattr(self.model_args, "current_dataset_name", None)
         prompt_mode = getattr(self.model_args, "foundation_prompt_mode", "minimal")
 
         for ref_img, tgt_img, prompt in zip(ref_images, target_images, prompts):
@@ -54,6 +57,7 @@ class CaptionBatcher:
                         processor,
                         device,
                         self.foundation_model,
+                        dataset_name=dataset_name,
                     )
                     text_out = minimal_result.get("final_text")
                     if not text_out:

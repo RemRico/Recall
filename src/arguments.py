@@ -58,6 +58,12 @@ class TrainingArguments(TrainingArguments):
     group_by_reference_image: bool = field(
         default=False, metadata={"help": "Group samples by reference image into the same batch during iterative training."}
     )
+    group_by_category: bool = field(
+        default=False, metadata={"help": "Group FashionIQ samples by category (dress/shirt/toptee) for batch sampling."}
+    )
+    use_minimal_prompt: bool = field(
+        default=True, metadata={"help": "Use minimal prompt mode for caption generation (automatically selects dataset-specific prompts)."}
+    )
     use_original_data_in_iter_plus: bool = field(
         default=True, metadata={"help": "Whether to use original data in iterations > 0. If False, only augmented data will be used."}
     )
