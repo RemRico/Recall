@@ -169,22 +169,22 @@ class MMEBTrainer(Trainer):
         is_iterative_phase = hasattr(self, 'current_iteration') and self.current_iteration > 0
         per_device_bs = int(getattr(self, "_train_batch_size", self.args.per_device_train_batch_size))
 
-        # ✅ 分组采样路径：使用 DDP 友好的 DistributedGroupedBatchSampler（充填到定长）
+        # Grouped sampling path: use DDP-friendly DistributedGroupedBatchSampler (pad to fixed length).
         if is_iterative_phase and getattr(self.args, 'group_by_reference_image', False):
             print_master(
-                f"✅ Using GroupedBatchSampler for iterative training (per-device batch ≈ {per_device_bs})."
+                f"Using GroupedBatchSampler for iterative training (per-device batch ≈ {per_device_bs})."
             )
             return DistributedGroupedBatchSampler(
                 dataset=self.train_dataset,
                 batch_size=per_device_bs,
                 shuffle=True,
-                pad_to_full=True,                         # 关键：保证每步每卡 batch 形状一致
-                drop_last=self.args.dataloader_drop_last, # 通常 False，配合 pad_to_full
+                pad_to_full=True,                         # Ensure identical per-step batch shapes across ranks.
+                drop_last=self.args.dataloader_drop_last, # Usually False when combined with `pad_to_full`.
                 seed=int(getattr(self.args, 'seed', 0)),
                 world_size=self.args.world_size if self.is_ddp else 1,
                 rank=self.args.process_index if self.is_ddp else 0,
                 ref_key="reference_image",
-                # 调试开关：可通过 TrainingArguments 传入 sampler_debug / sampler_debug_max_batches
+                # Debug knobs can be passed via TrainingArguments.
                 debug=bool(getattr(self.args, 'sampler_debug', True)),
                 debug_max_batches=int(getattr(self.args, 'sampler_debug_max_batches', 5)),
                 debug_preview_groups=int(getattr(self.args, 'sampler_debug_preview_groups', 3)),
@@ -193,9 +193,9 @@ class MMEBTrainer(Trainer):
                 debug_preview_small_max_size=int(getattr(self.args, 'sampler_debug_preview_small_max_size', 4)),
             )
 
-        # 非分组路径：标准 DistributedSampler
+        # Non-grouped path: standard DistributedSampler.
         if self.is_ddp:
-            print_master("✅ Using DistributedSampler for true data parallel.")
+            print_master("Using DistributedSampler for true data parallel.")
             return DistributedSampler(
                 self.train_dataset,
                 num_replicas=self.args.world_size,
@@ -204,7 +204,7 @@ class MMEBTrainer(Trainer):
                 drop_last=self.args.dataloader_drop_last,
             )
         else:
-            print_master("✅ Using standard RandomSampler (single process).")
+            print_master("Using standard RandomSampler (single process).")
             return RandomSampler(self.train_dataset)
 
     def get_train_dataloader(self) -> DataLoader:
@@ -272,19 +272,19 @@ class MMEBTrainer(Trainer):
             hasattr(self.model_args, 'checkpoint_path') and
             'iteration_' in str(self.model_args.checkpoint_path) or 'base_model' in str(self.model_args.checkpoint_path)
         ):
-            print_master("🎯 Iterative training detected with iteration model already loaded")
-            print_master("   ➡️  Skipping model reload, using current model state")
-            print_master("   ➡️  Will only load training state (optimizer, scheduler, etc.)")
+            print_master("Iterative training detected with iteration model already loaded")
+            print_master("   Skipping model reload, using current model state")
+            print_master("   Will only load training state (optimizer, scheduler, etc.)")
             return
 
-        print_master("📁 Loading model from trainer checkpoint")
+        print_master("Loading model from trainer checkpoint")
         if not os.path.isdir(resume_from_checkpoint):
             raise ValueError(f"Checkpoint directory {resume_from_checkpoint} does not exist")
 
         config_path = os.path.join(resume_from_checkpoint, "config.json")
         if not os.path.exists(config_path):
-            print_master("⚠️  No config.json found in trainer checkpoint")
-            print_master("   ➡️  Will keep current model and only load training state")
+            print_master("Warning: no config.json found in trainer checkpoint")
+            print_master("   Will keep current model and only load training state")
             return
 
         self.model_args.checkpoint_path = resume_from_checkpoint
@@ -321,7 +321,7 @@ class MMEBTrainer(Trainer):
             num_update_steps_per_epoch = max(num_update_steps_per_epoch, 1)
             num_examples = self.num_examples(train_dataloader)
 
-            print_master(f"🔍 DEBUG - Dataloader Analysis:")
+            print_master("DEBUG - Dataloader Analysis:")
             print_master(f"  len_dataloader: {len_dataloader}")
             print_master(f"  num_examples: {num_examples}")
             print_master(f"  world_size: {args.world_size}")
@@ -329,7 +329,7 @@ class MMEBTrainer(Trainer):
             if hasattr(self.train_dataset, '__len__'):
                 print_master(f"  dataset.__len__(): {len(self.train_dataset)}")
             print_master(f"  Using sampler type: {type(self._get_train_sampler()).__name__}")
-            print_master(f"🔍 ---------------")
+            print_master("---------------")
             if args.max_steps > 0:
                 max_steps = args.max_steps
                 num_train_epochs = args.max_steps // num_update_steps_per_epoch + int(
@@ -511,11 +511,11 @@ class MMEBTrainer(Trainer):
             )
 
             if epoch == 0:
-                print_master(f"🔍 DEBUG - Epoch Calculation Setup:")
+                print_master("DEBUG - Epoch Calculation Setup:")
                 print_master(f"  steps_in_epoch: {steps_in_epoch}")
                 print_master(f"  len(epoch_dataloader): {len(epoch_dataloader) if len_dataloader is not None else 'N/A'}")
                 print_master(f"  This will be used as denominator in: epoch + (step + 1) / steps_in_epoch")
-                print_master(f"🔍 ---------------")
+                print_master("---------------")
             self.control = self.callback_handler.on_epoch_begin(args, self.state, self.control)
 
             if epoch == epochs_trained and resume_from_checkpoint is not None and steps_trained_in_current_epoch == 0:
@@ -793,14 +793,14 @@ class GradCacheLateProcessTrainer(MMEBTrainer):
             queries, targets = inputs
 
         if negatives is not None and getattr(model, "triplet_loss_weight", 0.0) > 0 and not self._warned_gc_triplet:
-            print_master("⚠️ Triplet loss is not supported with GradCache; triplet component will be skipped.")
+            print_master("Warning: triplet loss is not supported with GradCache; triplet component will be skipped.")
             self._warned_gc_triplet = True
 
-        # 防止模型下游对意外 key 报错：弹掉调试字段
+        # Drop debug-only keys to avoid unexpected-key failures in downstream model calls.
         if isinstance(queries, dict) and "sample_ids" in queries:
-            queries = dict(queries)             # 浅拷贝，避免原地改
+            queries = dict(queries)             # Shallow copy to avoid in-place mutation.
             queries.pop("sample_ids", None)
-        # 然后再 batch_to_device / 调用模型
+        # Then move batches to device before model invocation.
         
         queries = batch_to_device(queries, model.device)
         targets = batch_to_device(targets, model.device)

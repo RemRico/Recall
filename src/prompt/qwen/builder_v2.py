@@ -95,7 +95,7 @@ def _load_stage_template() -> str:
 
 def create_prompt_instructions(original_text: str, is_hard_negative_context: bool = False) -> str:
     """
-    Optional diversity in instruction; can be expanded later.
+    Build a rewrite instruction with light template diversity.
     """
     if is_hard_negative_context:
         return (
@@ -173,7 +173,7 @@ def prepare_inputs_v2(
 def decode_raw_output(generated_text: str) -> str | None:
     if not generated_text:
         return None
-    # Try structured JSON blocks first
+    # Try structured JSON blocks first.
     try:
         parsed = json.loads(generated_text)
         if isinstance(parsed, dict) and "text_new" in parsed:

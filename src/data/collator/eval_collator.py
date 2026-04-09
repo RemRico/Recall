@@ -5,14 +5,12 @@ from src.arguments import DataArguments, ModelArguments
 import torch
 from qwen_vl_utils import smart_resize
 from PIL import Image
-from src.model.processor import LLAVA_NEXT, QWEN2_VL, QWEN2_5_VL, PHI3V, QWEN2_VL_TOKENSELECTION, QWEN2_5_VL_TOKENSELECTION, process_vlm_inputs_fns
+from src.model.processor import QWEN2_VL, QWEN2_5_VL, QWEN2_VL_TOKENSELECTION, QWEN2_5_VL_TOKENSELECTION, process_vlm_inputs_fns
 
-from src.utils import print_rank, print_master
+from src.utils import print_rank
 import io
 
 logger = logging.getLogger(__name__)
-PHI_IMAGE_TOKEN_MAX_INPUT_ID = int(1e9)
-LLAVA_IMAGE_TOKEN_ID = 32000
 
 @dataclass
 class EvalCollator:
@@ -21,13 +19,13 @@ class EvalCollator:
     processor: ProcessorMixin
 
     def __call__(self, examples):
-        """
-        :param examples: qry, qry_image, pos_text, pos_image
-        """
+        """Collate list[(text, image)] for single-side evaluation encoding."""
         examples = {'text': [e[0] for e in examples], 'images': [e[1] for e in examples]}
-        inputs = process_vlm_inputs_fns[self.model_args.model_backbone](examples,
-                                                                        processor = self.processor,
-                                                                        max_length = self.data_args.max_len)
+        inputs = process_vlm_inputs_fns[self.model_args.model_backbone](
+            examples,
+            processor=self.processor,
+            max_length=self.data_args.max_len,
+        )
         inputs['texts'] = examples['text']
         inputs['images'] = examples['images']
         inputs['image_paths'] = [i.filename if hasattr(i, 'filename') else None for i in examples['images']]
@@ -41,9 +39,7 @@ class CLIPCollator:
     txt_processors: AutoTokenizer
 
     def __call__(self, examples):
-        """
-        :param examples: qry, qry_image, pos_text, pos_image
-        """
+        """Collate list[(text, image)] for CLIP-style encoders."""
         inputs = self._get_batch_inputs(examples)
         return inputs
 
@@ -87,9 +83,7 @@ class OpenCLIPCollator:
     txt_processors: AutoTokenizer
 
     def __call__(self, examples):
-        """
-        :param examples: qry, qry_image, pos_text, pos_image
-        """
+        """Collate list[(text, image)] for OpenCLIP-style encoders."""
         inputs = self._get_batch_inputs(examples)
         return inputs
 
@@ -138,7 +132,7 @@ class MultimodalEvalDataCollator:
                 text, visual_input = '  ', None
             else:
                 ex_text, ex_images = example[text_keyname], example[image_keyname]
-                # ex_text, ex_images could be one single pair from the query side or a list of pairs from the candidates side
+                # ex_text/ex_images can be a single pair or a list of candidate pairs.
                 has_image = isinstance(ex_images, dict) or (isinstance(ex_images, list) and all(isinstance(item, dict) for item in ex_images))
                 if has_image:
                     for text, raw_images in zip(ex_text, ex_images):
@@ -152,10 +146,8 @@ class MultimodalEvalDataCollator:
                             if bytes is None and path is None:
                                 image = None
                             elif bytes is not None:
-                                # vidore, image inputs are already bytes
                                 image = Image.open(io.BytesIO(bytes))
                             elif path is not None:
-                                # mmeb/video datasets, lazy image loading and processing
                                 image = Image.open(path)
                             else:
                                 print_rank(f"\n{'=' * 50}\nsomething went wrong with a data point from {example['global_dataset_name']}, neither bytes or path is given. \n\t\tquery_text: {example['query_text']}")
@@ -164,7 +156,7 @@ class MultimodalEvalDataCollator:
                             if image is not None and (image_resolution is not None and self.data_args.image_decay_factor is not None):
                                 assert image_resolution is None, "image_resolution is conflicting with image_decay_factor"
                                 assert self.model_args.model_backbone in [QWEN2_VL, QWEN2_5_VL, QWEN2_VL_TOKENSELECTION, QWEN2_5_VL_TOKENSELECTION], "image_decay_factor is only supported for Qwen models"
-                                # TODO: this is a hacky way to decay image resolution, need to be refactored
+                                # Apply progressive resolution decay across multi-image inputs.
                                 max_pixels = max(self.data_args.resize_min_pixels, self.data_args.resize_max_pixels * self.data_args.image_decay_factor ** (num_images - image_idx))
                                 width, height = image.size
                                 resized_height, resized_width = smart_resize(
@@ -178,20 +170,16 @@ class MultimodalEvalDataCollator:
                         texts.append(text)
                         visual_inputs.append(visual_input)
                 else:
-                    # flatten the list in cases of multiple candidates
                     for text, visual_input in zip(ex_text, ex_images):
                         texts.append(text)
                         visual_inputs.append(visual_input)
-                        pass
 
         inputs = {'text': texts, 'images': visual_inputs}
         return inputs
 
 
     def __call__(self, examples):
-        """
-        :param examples: 'query_text', 'query_image', 'cand_text', 'cand_image'
-        """
+        """Collate multi-candidate eval samples for query or candidate encoding."""
         process_fn = process_vlm_inputs_fns[self.model_args.model_backbone]
         if self.encode_side == 'qry':
             assert type(examples[0]['query_text']) == list or type(examples[0]['query_image']) == list, "Expect text/image to be a list, even it only contains a single element (string, dict or None)"

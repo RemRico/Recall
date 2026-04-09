@@ -1,0 +1,47 @@
+<Input>
+    "REFERENCE": Picture 1,
+    "TARGET": Picture 2,
+    "Input edit text": {modification_text}
+
+=====================
+STAGES (run in order)
+=====================
+##Visual Scan:
+- Provide one line per image using this format:
+  Reference | objects="..." | colors="..." | lighting="..." | layout="..."
+  Target | objects="..." | colors="..." | lighting="..." | layout="..."
+- Mention lighting/brightness explicitly (e.g., "soft warm light", "dim evening light").
+- Use "uncertain" for any attribute that cannot be confirmed.
+
+##Intent Breakdown (only the input edit text: {modification_text}):
+- Split the input text into atomic spans.
+- Format per line:
+  I# | span="..." | intent="..." | type=absolute|relative | note="..."
+- Use type=relative when the span implies comparison/change between images; otherwise type=absolute.
+- Keep I# sequential (I1, I2, ...).
+
+##Evidence from Images:
+- For each intent produce one line in the same order:
+  I# | target_obs="..." | reference_obs="..." | supports=Yes|No|Uncertain | reason="..."
+- For type=absolute intents, leave reference_obs="" and base supports only on the TARGET image.
+- For type=relative intents, describe what changes between TARGET and REFERENCE.
+- Always record what is actually visible in TARGET (e.g., real color, material, absence).
+- If visibility is low, set supports=Uncertain and explain why in reason="...".
+
+##Decision per Intent:
+- For each intent decide how to rewrite:
+  I# | action=keep|rewrite|generalize|delete | new_span="..." | justification="..."
+- Supports/action mapping:
+  • supports=Yes → action=keep or generalize.
+  • supports=No → action=rewrite and describe the actual TARGET observation (color/material/absence); new_span must not be empty.
+  • supports=Uncertain → action=generalize or rewrite with a cautious phrase (e.g., "carpet is unclear").
+- Avoid action=delete unless the intent is completely irrelevant; if used, new_span="" and justification must state why the span is removed.
+- "new_span" must be a concise fragment that will appear in the final text (empty only when action=delete).
+
+##Generate Text_new:
+- Merge all intents with action=keep/rewrite/generalize into one fluent sentence.
+- Format:
+  text_new="..."
+- Keep wording close to the original phrasing but reflect any rewrites you made.
+- Do not mention the words Reference/Target/Intent.
+- Ignore intents with action=delete when composing the final sentence.

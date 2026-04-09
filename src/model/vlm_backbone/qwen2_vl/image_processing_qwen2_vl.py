@@ -152,7 +152,7 @@ class Qwen2VLImageProcessor(BaseImageProcessor):
         else:
             size = size.copy()
 
-        # backward compatibility: 若缺少标准键，尝试从旧配置字段推导
+        # Backward compatibility: derive standard keys from legacy config fields when missing.
         if "shortest_edge" not in size:
             if "min_pixels" in size and size["min_pixels"] is not None:
                 size["shortest_edge"] = int(size["min_pixels"])
@@ -168,7 +168,7 @@ class Qwen2VLImageProcessor(BaseImageProcessor):
             else:
                 size["longest_edge"] = 28 * 28 * 1280
 
-        # 保留旧字段，方便序列化
+        # Keep legacy fields for serialization compatibility.
         size.setdefault("min_pixels", size["shortest_edge"])
         size.setdefault("max_pixels", size["longest_edge"])
 

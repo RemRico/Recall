@@ -3,19 +3,24 @@ from __future__ import annotations
 from typing import List, Dict, Any, Optional
 import os
 
-from ..utils import print_rank  # 你项目里的统一日志函数
-from ..utils.path_utils import get_full_image_path  # 统一路径规范化
-import os
+from ..utils import print_rank
+from ..utils.path_utils import get_full_image_path
 import time
 import json
 import torch
 import torch.distributed as dist
 
+
 class HardNegativeMiner:
     """
-    硬负样本识别与过滤（不包含I/O加载图像/模型以外的逻辑）
-    - 依赖 CandidateBuilder / EmbeddingCache / RetrievalEngine
-    - 提供单卡与“最小改动版”分布式两种收集方式
+    Hard-negative mining and filtering helper.
+
+    Dependencies:
+    - CandidateBuilder
+    - EmbeddingCache
+    - RetrievalEngine
+
+    Supports both single-GPU and distributed collection.
     """
 
     def __init__(self,experiment_dir: str, iteration_round: int,
@@ -46,7 +51,7 @@ class HardNegativeMiner:
 
     def collect_single_gpu(self, retrieval_model, annotations, batch_size=8, max_samples=None, *, processor=None, model_backbone: Optional[str] = None, device=None, prepare_target_inputs_fn=None, **_):
         """
-        单卡硬负样本收集
+        Collect hard negatives on a single GPU.
         """
         if os.path.exists(self.hard_negatives_file):
             print_rank(f"Loading existing hard negatives: {self.hard_negatives_file}")
@@ -61,11 +66,11 @@ class HardNegativeMiner:
             except Exception as e:
                 print_rank(f"Load cache failed, will recompute: {e}")
 
-        # build candidates (once)
+        # Build retrieval candidates once.
         candidates = self.candidate_builder.build()
         print_rank(f"Candidates ready: {len(candidates)}")
 
-        # compute / load target embeddings (单卡)
+        # Compute or load target embeddings.
         model = retrieval_model
         proc = processor if processor is not None else getattr(model, "processor", None)
         device = next(model.parameters()).device
@@ -81,17 +86,17 @@ class HardNegativeMiner:
             else self.retrieval_engine._prepare_target_inputs
         )
 
-        # 3) 计算 / 加载 target embeddings（关键：传入 prepare 函数）
+        # Compute / load target embeddings with aligned target-input preparation.
         target_emb = self.embedding_cache.get_or_compute(
             candidates,   # target_database
             model,        # model
             proc,         # processor
             backbone,     # model_backbone
             dev,          # device
-            prep_fn,      # ✅ prepare_target_inputs_fn
+            prep_fn,
         )
 
-        # process queries
+        # Process queries.
         samples = annotations[:max_samples] if max_samples is not None else annotations
         print_rank(f"Starting single-GPU hard negative collection for {len(samples)} queries")
 
@@ -115,7 +120,7 @@ class HardNegativeMiner:
 
         with open(self.hard_negatives_file, "w") as f:
             json.dump(all_neg, f, indent=2)
-        print_rank(f"✅ Saved {len(all_neg)} hard negatives -> {self.hard_negatives_file}")
+        print_rank(f"Saved {len(all_neg)} hard negatives -> {self.hard_negatives_file}")
         self.hard_negatives_cache = all_neg
         return all_neg
 
@@ -133,8 +138,11 @@ class HardNegativeMiner:
         **_
     ):
         """
-        (最小改动版) 分布式：rank0 计算全库 target embeddings + 落盘，其它 rank 轮询等待后加载；
-        再将查询任务划分到各 rank 并行，最后 all_gather + rank0 落盘，广播。
+        Distributed collection with file-based synchronization.
+
+        Rank 0 computes and stores target embeddings, other ranks poll for
+        readiness, then process disjoint query shards and merge with
+        `all_gather_object`.
         """
         if not dist.is_initialized():
             return self.collect_single_gpu(
@@ -147,7 +155,7 @@ class HardNegativeMiner:
         world_size = dist.get_world_size()
         dev = device if device is not None else (f"cuda:{rank}" if torch.cuda.is_available() else "cpu")
 
-        # 若最终文件存在，各 rank 直接读
+        # If final output already exists, all ranks read directly.
         if os.path.exists(self.hard_negatives_file):
             try:
                 with open(self.hard_negatives_file, "r") as f:
@@ -160,9 +168,9 @@ class HardNegativeMiner:
             except Exception as e:
                 print_rank(f"GPU {rank}: read existed file failed, recompute: {e}")
 
-        # 构建候选集一次
+        # Build candidate set once.
         candidates = self.candidate_builder.build()
-        # 2) 推断 / 采用外部传入的组件
+
         model = retrieval_model
         proc = processor if processor is not None else getattr(model, "processor", None)
         backbone = (
@@ -179,8 +187,7 @@ class HardNegativeMiner:
         cache_file = self.embedding_cache.get_cache_file_path(candidates)
         done_flag = cache_file + ".done"
 
-
-        # 3) rank0 负责计算/落盘（传 prepare 函数）
+        # Rank 0 computes and writes embeddings.
         if rank == 0:
             print_rank("GPU 0: Computing / loading target embeddings...")
             self.embedding_cache.get_or_compute(
@@ -189,7 +196,7 @@ class HardNegativeMiner:
                 proc,
                 backbone,
                 'cuda:0' if torch.cuda.is_available() else 'cpu',
-                prep_fn,  # ✅ 传入回调
+                prep_fn,
             )
             with open(done_flag, "w") as f:
                 f.write(str(time.time()))
@@ -197,11 +204,11 @@ class HardNegativeMiner:
         else:
             print_rank(f"GPU {rank}: Waiting embeddings flag (no barrier)...")
 
-        # 其它 rank 轮询等待
+        # Other ranks poll without distributed barrier.
         if rank != 0:
             _poll_files([cache_file, done_flag], rank, timeout_s=3 * 3600)
 
-        # 5) 所有 rank 加载缓存（去掉 weights_only=True，兼容性更好）
+        # All ranks load cached embeddings.
         try:
             cached = torch.load(cache_file, map_location=dev)
             target_emb = cached["embeddings"].to(next(model.parameters()).dtype)
@@ -209,7 +216,7 @@ class HardNegativeMiner:
         except Exception as e:
             raise RuntimeError(f"GPU {rank}: load embeddings failed: {e}")
 
-        # 切分查询
+        # Split query workload by rank.
         samples = annotations[:max_samples] if max_samples is not None else annotations
         total = len(samples)
         per_rank = (total + world_size - 1) // world_size
@@ -235,7 +242,7 @@ class HardNegativeMiner:
                 negs = self._identify_hard_negatives(batch, results)
                 local_neg.extend(negs)
 
-        # 8) all_gather -> rank0 汇总/落盘 -> 广播
+        # Gather all local hard negatives, then rank 0 writes final result.
         gathered = [None] * world_size
         try:
             dist.all_gather_object(gathered, local_neg)
@@ -262,7 +269,7 @@ class HardNegativeMiner:
         print_rank(f"GPU {rank}: done. total hard negatives = {len(self.hard_negatives_cache)}")
         return self.hard_negatives_cache
 
-    # ---- helper: 路径级“是否同一张图”的判定（保持你原逻辑：先 realpath+normpath，兜底 basename） ----
+    # Helper: robust same-image check by normalized absolute path, with basename fallback.
     def _is_same_image(self, path1: Optional[str], path2: Optional[str]) -> bool:
         if not path1 or not path2:
             return False
@@ -279,17 +286,19 @@ class HardNegativeMiner:
                  batch: List[Dict[str, Any]],
                  retrieval_results: Dict[str, Any]) -> List[Dict[str, Any]]:
         """
-        与你给出的 _identify_hard_negatives 一致，只把路径解析换成 utils.path_utils。
-        参数
+        Identify hard negatives from retrieval outputs.
+
+        Args:
         - batch: [{'reference_image', 'modification_text', 'target_image'}, ...]
         - retrieval_results: {
             'top_k_indices': List[List[int]],
             'gt_indices': List[int],
             'similarities': List[List[float]],
-            # 真实检索时一定含有：
+                        # Always present in real retrieval mode:
             'target_paths': List[str]
           }
-        返回：硬负样本列表（与原结构一致）
+        Returns:
+            Hard negative samples with metadata.
         """
         hard_negatives: List[Dict[str, Any]] = []
 
@@ -305,11 +314,11 @@ class HardNegativeMiner:
         for qidx, (query, gt_target, top_k, sims) in enumerate(
             zip(batch, gt_indices, top_k_indices, similarities)
         ):
-            # 🔥 关键：过滤掉参考图本身
+            # Filter out the reference image itself.
             query_ref_path = query['reference_image']
             filtered_hard_negatives = []
 
-            # 计算 top-k 内 GT 的名次（1-based），仅用于显示；真实绝对名次从 engine 提供
+            # Compute GT top-k rank (1-based) for reporting.
             gt_topk_rank = -1
             if gt_target in top_k:
                 gt_topk_rank = int(top_k.index(gt_target) + 1)
@@ -317,41 +326,37 @@ class HardNegativeMiner:
             def process_negative_candidate(neg_pos: int,
                                            neg_idx: int,
                                            gt_position: int = -1) -> bool:
-                """将候选加入硬负样本，若命中过滤条件则跳过"""
+                """Append a negative candidate unless it matches filtered cases."""
                 if is_real_retrieval:
-                    # 真实检索：neg_idx 指向 target_paths
                     hard_negative_image = (
                         target_paths[neg_idx] if neg_idx < len(target_paths)
                         else f"target_{neg_idx}"
                     )
                 else:
-                    # 模拟检索：直接保留 index
                     hard_negative_image = neg_idx
 
-                # 1) 过滤“候选 == 参考图(reference)”
+                # 1) candidate == reference image
                 if is_real_retrieval and self._is_same_image(query_ref_path, hard_negative_image):
                     print_rank(f"Filtered out reference image as hard negative: {query_ref_path}")
                     return False
 
-                # 2) 过滤“候选 == GT(target)”，避免把正样本当负样本
+                # 2) candidate == ground-truth target image
                 if is_real_retrieval and 'target_image' in query and \
                         self._is_same_image(query['target_image'], hard_negative_image):
                     print_rank(f"Filtered out ground truth as hard negative: {hard_negative_image}")
                     return False
 
-                # 真实绝对名次与相似度
+                # Absolute GT rank and similarity metadata.
                 full_rank = gt_full_ranks[qidx] if isinstance(gt_full_ranks, list) and qidx < len(gt_full_ranks) else -1
                 gt_sim = gt_sim_list[qidx] if isinstance(gt_sim_list, list) and qidx < len(gt_sim_list) else None
                 gt_in_candidates = (gt_target != -1)
 
-                # 通过过滤，加到列表
                 filtered_hard_negatives.append({
                     'reference_image': query['reference_image'],
                     'modification_text': query['modification_text'],
                     'target_image': query['target_image'],  # GT
                     'hard_negative_image': hard_negative_image,
                     'rank_position': int(neg_pos + 1),
-                    # ✅ 改：JSON 中的 gt_rank 表示全库绝对名次（1-based）；保留 topk 名次单独字段
                     'gt_rank': int(full_rank),
                     'gt_topk_rank': int(gt_topk_rank),
                     'gt_in_candidates': bool(gt_in_candidates),
@@ -366,7 +371,7 @@ class HardNegativeMiner:
             topN = min(self.examine_topk, len(top_k))
 
             if gt_target == -1:
-                # GT 不在检索库：前 topN 都是潜在硬负
+                # GT is not in retrieval candidates.
                 for neg_pos in range(topN):
                     if collected >= limit:
                         break
@@ -374,7 +379,7 @@ class HardNegativeMiner:
                         collected += 1
 
             elif gt_target in top_k:
-                # GT 在 top-k：收集所有排在 GT 之前的
+                # GT appears in top-k: take negatives before GT.
                 gt_position = top_k.index(gt_target)
                 if gt_position > 0:
                     for neg_pos in range(gt_position):
@@ -391,7 +396,7 @@ class HardNegativeMiner:
                         if process_negative_candidate(neg_pos, top_k[neg_pos], gt_position):
                             collected += 1
             else:
-                # GT 在库但不在 top-k：前 topN 都是潜在硬负
+                # GT is in candidate set but not in top-k.
                 for neg_pos in range(topN):
                     if collected >= limit:
                         break
@@ -407,14 +412,14 @@ class HardNegativeMiner:
         return hard_negatives
     
     def _to_abs_path(self, builder, key_or_path: str) -> str:
-        """把 splits key 或相对路径转换为绝对路径"""
+        """Resolve split keys or relative paths to absolute image paths."""
         val = builder.image_splits.get(key_or_path, key_or_path)
         return get_full_image_path(val, self.image_base_dir)
 
 
-# ----------------------
-# polling util (分布式不 barrier 的文件轮询)
-# ----------------------
+    # ----------------------
+    # Polling util for file-based distributed synchronization.
+    # ----------------------
 def _poll_files(paths, rank, timeout_s=3*3600, poll_interval=2):
     start = time.time()
     missing = set(paths)

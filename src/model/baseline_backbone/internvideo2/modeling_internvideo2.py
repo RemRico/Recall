@@ -967,7 +967,6 @@ class PretrainInternVideo2(nn.Module):
         for idx, blk in enumerate(self.blocks):
             if isinstance(x, tuple) and len(x) == 2:
                 x, residual = x
-            # print(f"\033[31m这是{idx}, {x.shape}\033[0m")
             x = blk(x, residual=residual)
             # return intermediate features
             if idx in self.return_index:
@@ -3094,33 +3093,33 @@ class DictToClass:
                 setattr(self, key, value)
 
     def __repr__(self):
-        """方便调试的对象表示"""
+        """Readable object representation for debugging."""
         attrs = ', '.join(f"{k}={v!r}" for k, v in self.__dict__.items())
         return f"{self.__class__.__name__}({attrs})"
 
 
 def instance2dict(obj):
-    """将类实例及其嵌套属性转换为字典"""
+    """Convert class instances and nested attributes into dictionaries."""
     if isinstance(obj, (str, int, float, bool, type(None))):
-        # 基本类型直接返回
+        # Return primitive types directly.
         return obj
     elif isinstance(obj, dict):
-        # 字典类型递归处理值
+        # Recursively process dictionary values.
         return {k: instance2dict(v) for k, v in obj.items()}
     elif isinstance(obj, (list, tuple, set)):
-        # 可迭代类型递归处理元素
+        # Recursively process iterable elements.
         return type(obj)(instance2dict(item) for item in obj)
     elif hasattr(obj, '__dict__'):
-        # 类实例处理
+        # Handle class instances.
         result = {}
         for key, value in obj.__dict__.items():
-            # 过滤私有属性（可选）
+            # Optionally filter private attributes.
             if not key.startswith('_'):
                 result[key] = instance2dict(value)
         return result
     else:
-        # 其他不可序列化类型直接返回
-        return str(obj)  # 或者根据需求抛出异常
+        # Return other non-serializable types as strings.
+        return str(obj)  # Or raise an exception based on project needs.
 
 
 class InternVideo2_Stage2_Config(PretrainedConfig):

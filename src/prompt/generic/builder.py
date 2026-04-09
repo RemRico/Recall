@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
-import os, random
+import os
+import random
 from typing import Dict
 
 _THIS_DIR = os.path.dirname(__file__)
@@ -14,9 +15,11 @@ def _load_lines():
     for ln in raw.splitlines():
         t = ln.strip()
         if t == "[[HARD_NEGATIVE]]":
-            mode = "hard"; continue
+            mode = "hard"
+            continue
         if t == "[[DIVERSITY]]":
-            mode = "div"; continue
+            mode = "div"
+            continue
         if not t:
             continue
         if mode == "hard":

@@ -7,13 +7,13 @@ builders in a later step to match CIRR's retrieval/augmentation pipeline.
 
 import json
 import os
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Set
 from glob import glob
 
 from .base_iterative_dataset import IterativeRetrievalDataset
 from src.utils import print_rank
 from ...model.processor import process_input_text
- 
+
 
 class IterativeFashionIQDataset(IterativeRetrievalDataset):
     """
@@ -29,7 +29,7 @@ class IterativeFashionIQDataset(IterativeRetrievalDataset):
 
         data_dir = self.dataset_config.get("data_dir", "./data/FashionIQ")
         self.image_base_dir = os.path.join(data_dir, "images")
-        dataset_split = self.dataset_config.get("dataset_split", "train")  # train/val/test
+        dataset_split = self.dataset_config.get("dataset_split", "train")
 
         # Step 1: Load split files to get valid images for this split
         print_rank(f"Loading FashionIQ split files for split: {dataset_split}")
@@ -67,7 +67,7 @@ class IterativeFashionIQDataset(IterativeRetrievalDataset):
         
         self.num_rows = len(self.annotations) + len(self.augmented_samples)
 
-    def _load_split_files(self, data_dir: str, split: str) -> set:
+    def _load_split_files(self, data_dir: str, split: str) -> Set[str]:
         """
         Load image split files to get valid image IDs for the given split.
         
@@ -93,7 +93,7 @@ class IterativeFashionIQDataset(IterativeRetrievalDataset):
         
         return valid_ids
 
-    def _build_retrieval_candidates(self, valid_image_ids: set) -> List[str]:
+    def _build_retrieval_candidates(self, valid_image_ids: Set[str]) -> List[str]:
         """
         Build retrieval candidates list filtered by valid image IDs from split files.
         
@@ -118,7 +118,7 @@ class IterativeFashionIQDataset(IterativeRetrievalDataset):
         print_rank(f"  • Filtered {len(candidates)} valid candidates from {len(all_image_paths)} total images")
         return candidates
 
-    def _build_image_splits(self, valid_image_ids: set = None) -> Dict[str, str]:
+    def _build_image_splits(self, valid_image_ids: Set[str] = None) -> Dict[str, str]:
         """
         Build image_splits mapping: image_id -> relative_path
         Supports both flat structure (images/*.png) and category structure (images/dress/*.png)
@@ -143,7 +143,6 @@ class IterativeFashionIQDataset(IterativeRetrievalDataset):
             for cat in categories:
                 cat_dir = os.path.join(self.image_base_dir, cat)
                 if os.path.exists(cat_dir):
-                    # Try both .png and .jpg extensions
                     for ext in ["*.png", "*.jpg", "*.jpeg"]:
                         pattern = os.path.join(cat_dir, ext)
                         for img_path in glob(pattern):
@@ -199,8 +198,8 @@ class IterativeFashionIQDataset(IterativeRetrievalDataset):
             normalized_ann = dict(ann)  # Copy original fields
             
             # Add CIRR-compatible fields
-            normalized_ann['reference'] = ann['candidate']  # CIRR uses 'reference'
-            normalized_ann['target_hard'] = ann['target']   # CIRR uses 'target_hard'
+            normalized_ann['reference'] = ann['candidate']
+            normalized_ann['target_hard'] = ann['target']
             
             # Join multiple captions with "and" for single caption field
             if 'captions' in ann and ann['captions']:
@@ -212,7 +211,6 @@ class IterativeFashionIQDataset(IterativeRetrievalDataset):
             candidate_id = ann['candidate']
             target_id = ann['target']
             
-            # Try different key formats to find the image
             candidate_found = self._find_image_path(candidate_id, ann.get('category', ''))
             target_found = self._find_image_path(target_id, ann.get('category', ''))
             
@@ -234,20 +232,19 @@ class IterativeFashionIQDataset(IterativeRetrievalDataset):
         Check if an image exists in image_splits using various key formats.
         Returns True if found, False otherwise.
         """
-        # Try different key formats
         possible_keys = [
-            image_id,  # "B007FO5H1Q"
-            f"{image_id}.png",  # "B007FO5H1Q.png"
-            f"{image_id}.jpg",  # "B007FO5H1Q.jpg"
-            f"{image_id}.jpeg",  # "B007FO5H1Q.jpeg"
+            image_id,
+            f"{image_id}.png",
+            f"{image_id}.jpg",
+            f"{image_id}.jpeg",
         ]
         
         if category:
             possible_keys.extend([
-                f"{category}/{image_id}",  # "toptee/B007FO5H1Q"
-                f"{category}/{image_id}.png",  # "toptee/B007FO5H1Q.png"
-                f"{category}/{image_id}.jpg",  # "toptee/B007FO5H1Q.jpg"
-                f"{category}/{image_id}.jpeg",  # "toptee/B007FO5H1Q.jpeg"
+                f"{category}/{image_id}",
+                f"{category}/{image_id}.png",
+                f"{category}/{image_id}.jpg",
+                f"{category}/{image_id}.jpeg",
             ])
         
         return any(key in self.image_splits for key in possible_keys)
@@ -257,20 +254,19 @@ class IterativeFashionIQDataset(IterativeRetrievalDataset):
         Get the actual image path from image_splits using various key formats.
         Returns the relative path if found, otherwise returns a fallback path.
         """
-        # Try different key formats
         possible_keys = [
-            image_id,  # "B007FO5H1Q"
-            f"{image_id}.png",  # "B007FO5H1Q.png"
-            f"{image_id}.jpg",  # "B007FO5H1Q.jpg"
-            f"{image_id}.jpeg",  # "B007FO5H1Q.jpeg"
+            image_id,
+            f"{image_id}.png",
+            f"{image_id}.jpg",
+            f"{image_id}.jpeg",
         ]
         
         if category:
             possible_keys.extend([
-                f"{category}/{image_id}",  # "toptee/B007FO5H1Q"
-                f"{category}/{image_id}.png",  # "toptee/B007FO5H1Q.png"
-                f"{category}/{image_id}.jpg",  # "toptee/B007FO5H1Q.jpg"
-                f"{category}/{image_id}.jpeg",  # "toptee/B007FO5H1Q.jpeg"
+                f"{category}/{image_id}",
+                f"{category}/{image_id}.png",
+                f"{category}/{image_id}.jpg",
+                f"{category}/{image_id}.jpeg",
             ])
         
         # Try to find the image in image_splits
@@ -297,42 +293,33 @@ class IterativeFashionIQDataset(IterativeRetrievalDataset):
 
     def _get_original_sample(self, idx: int) -> Dict[str, Any]:
         sample = self.annotations[idx]
-        
-        # Use normalized fields (added by _normalize_annotations)
-        # Get image paths from image_splits using the normalized reference/target_hard fields
+
         ref_image_path = self._get_image_path_from_splits(sample['reference'], sample.get('category', ''))
         target_image_path = self._get_image_path_from_splits(sample['target_hard'], sample.get('category', ''))
-        
-        # Use the normalized caption field
+
         modification_text = sample.get('caption', '')
         category = sample.get('category', '')
         model_backbone = getattr(self.model_args, "model_backbone", "qwen2_vl")
-        
-        # Query = (reference image + modification text)
+
         query_text = process_input_text(
             instruction=f"Change the style of this {category} to <{modification_text}>\nRepresent this modified {category} in one word:",
-            # instruction = f"Modify this image with <{modification_text}>\nRepresent the modified image in one word:",
-            # instruction = f"Find an image to match the fashion image and style note.\n{modification_text}",
             model_backbone=model_backbone,
             text="",
             add_image_token=True,
         )
-        # Positive = target image (empty text + image token)
         pos_text = process_input_text(
             instruction="Represent the given image in one word:",
-            # instruction="Represent the given image",
             model_backbone=model_backbone,
             text="",
             add_image_token=True,
         )
-        # Negative placeholder = reference image again (same as CIRR baseline)
         neg_text = process_input_text(
             instruction="",
             model_backbone=model_backbone,
             text="",
             add_image_token=True,
         )
-        
+
         return {
             "query_text": query_text,
             "query_image": self._load_image(ref_image_path),
@@ -341,31 +328,26 @@ class IterativeFashionIQDataset(IterativeRetrievalDataset):
             "neg_text": neg_text,
             "neg_image": self._load_image(ref_image_path),
             "global_dataset_name": "FashionIQ",
-            # 🔥 关键修复：使用绝对路径，确保与增强样本的 reference_image 格式一致，
-            # 这样 GroupedBatchSampler 才能将同一 reference 的原始样本和增强样本分到同一组
-            "reference_image": self._get_full_image_path(ref_image_path),  # normalized for grouping
+            "reference_image": self._get_full_image_path(ref_image_path),
             "reference_id": self._get_reference_id(ref_image_path),
             "is_augmented": False,
-            "category": sample.get("category", ""),  # FashionIQ特有的类别信息
+            "category": sample.get("category", ""),
         }
 
     def _get_augmented_sample(self, idx: int) -> Dict[str, Any]:
         sample = self.augmented_samples[idx]
-        
+
         category = sample.get('category', '')
         model_backbone = getattr(self.model_args, "model_backbone", "qwen2_vl")
-        
+
         query_text = process_input_text(
             instruction=f"Change the style of this {category} to <{sample['modification_text']}>\nRepresent this modified {category} in one word:",
-            # instruction = f"Modify this image with <{sample['modification_text']}>\nRepresent the modified image in one word:",
-            # instruction = f"Find an image to match the fashion image and style note.\n{sample['modification_text']}",
             model_backbone=model_backbone,
             text="",
             add_image_token=True,
         )
         pos_text = process_input_text(
             instruction="Represent the given image in one word:",
-            # instruction="Represent the given image",
             model_backbone=model_backbone,
             text="",
             add_image_token=True,
@@ -376,13 +358,11 @@ class IterativeFashionIQDataset(IterativeRetrievalDataset):
             text="",
             add_image_token=True,
         )
-        
-        # 🔥 确保增强样本的 reference_image 也是绝对路径（可能已经是，但double-check）
+
         ref_img_path = sample["reference_image"]
-        # 如果已经是绝对路径就保持，否则转换为绝对路径
         if not os.path.isabs(ref_img_path):
             ref_img_path = self._get_full_image_path(ref_img_path)
-        
+
         return {
             "query_text": query_text,
             "query_image": self._load_image(sample["reference_image"]),
@@ -395,9 +375,8 @@ class IterativeFashionIQDataset(IterativeRetrievalDataset):
             "original_mod_text": sample.get("original_mod_text", ""),
             "reference_image": ref_img_path,
             "reference_id": self._get_reference_id(ref_img_path),
-            "category": sample.get("category", ""),  # FashionIQ特有的类别信息
+            "category": sample.get("category", ""),
         }
 
-# 注册到数据集工厂（与 CIRR 保持一致）
 from ...data.dataset.base_pair_dataset import AutoPairDataset
 AutoPairDataset.registry["IterativeFashionIQDataset"] = IterativeFashionIQDataset

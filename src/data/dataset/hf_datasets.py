@@ -1,28 +1,22 @@
 """
 Based on datasets combine.py and iterable_dataset.py
 """
+from copy import deepcopy
 from itertools import cycle
-from typing import List, Optional, TypeVar
+from typing import Iterator, List, Optional, TypeVar
 
 from datasets.arrow_dataset import Dataset, _interleave_map_style_datasets
 from datasets.dataset_dict import DatasetDict, IterableDatasetDict
 from datasets.iterable_dataset import IterableDataset, CyclingMultiSourcesExamplesIterable, \
     RandomlyCyclingMultiSourcesExamplesIterable, _BaseExamplesIterable
-from datasets.utils import logging
-from copy import deepcopy
-from typing import Iterator, List, Optional
-
 import numpy as np
-from datasets.arrow_dataset import Dataset, DatasetInfoMixin
 from datasets.features import Features
-from datasets.features.features import FeatureType, _align_features, _check_if_features_can_be_aligned, cast_to_python_objects
+from datasets.features.features import _align_features, _check_if_features_can_be_aligned
 from datasets.info import DatasetInfo
 from datasets.splits import NamedSplit
 from datasets.utils.py_utils import Literal
 
 from src.utils import print_master
-
-logger = logging.get_logger(__name__)
 
 
 DatasetType = TypeVar("DatasetType", Dataset, IterableDataset)
@@ -195,8 +189,7 @@ def _interleave_iterable_datasets(
     # Perform checks
     _check_if_features_can_be_aligned([dset.features for dset in datasets])
 
-    # TODO: improve this to account for a mix of ClassLabel and Value for example
-    # right now it would keep the type of the first dataset in the list
+    # Keep aligned feature types from upstream datasets implementation.
     features = Features(
         {k: v for features in _align_features([dset.features for dset in datasets]) for k, v in features.items()}
     )
@@ -232,7 +225,7 @@ def _interleave_iterable_datasets(
     token_per_repo_id = {
         repo_id: token for dataset in datasets for repo_id, token in dataset._token_per_repo_id.items()
     }
-    # Return new daset
+    # Return new dataset
     return IterableDataset(ex_iterable=ex_iterable, info=info, split=split, token_per_repo_id=token_per_repo_id)
 
 
@@ -249,9 +242,8 @@ class CyclingMultiSourcesBatchesIterable(_BaseExamplesIterable):
         self.stopping_strategy = stopping_strategy
 
         # if undersampling ("first_exhausted"), we stop as soon as one dataset is exhausted
-        # if oversampling ("all_exhausted"), we stop as soons as every dataset is exhausted, i.e as soon as every samples of every dataset has been visited at least once
+        # if oversampling ("all_exhausted"), we stop when every dataset is exhausted at least once
         self.bool_strategy_func = np.all if (stopping_strategy == "all_exhausted") else np.any
-        # TODO(QL): implement iter_arrow
 
     def _get_indices_iterator(self):
         # this is an infinite iterator to keep track of which iterator we want to pick examples from
@@ -261,19 +253,14 @@ class CyclingMultiSourcesBatchesIterable(_BaseExamplesIterable):
         iterators = [_HasNextIterator(ex_iterable) for ex_iterable in self.ex_iterables]
         indices_iterator = self._get_indices_iterator()
         is_exhausted = np.full(len(self.ex_iterables), False)
-        count = 0
         for i in indices_iterator:
-            count += 1
             try:  # let's pick one example from the iterator at index i
                 yield next(iterators[i])
                 # it will resume from the yield at the next call so that we can directly test if the iterable is exhausted and if we need to break out of the loop
                 if not iterators[i].hasnext():
                     is_exhausted[i] = True
-                    # print(f"dataset-{i} exhausted")
-                    # print(is_exhausted)
                     if self.bool_strategy_func(is_exhausted):
                         # if the stopping criteria is met, break the main for loop
-                        # print(f"all datasets exhausted")
                         break
                     # otherwise reinitialise the iterator and yield the first example
                     iterators[i] = _HasNextIterator(self.ex_iterables[i])
@@ -281,11 +268,8 @@ class CyclingMultiSourcesBatchesIterable(_BaseExamplesIterable):
                 # here it means that the i-th iterabledataset is empty, i.e we never have the occasion to yield an element of the i-th dataset.
                 # we still check if the stopping criteria is met and if we break out of the loop in case of an oversampling strategy
                 is_exhausted[i] = True
-                # print(f"StopIteration: dataset-{i} exhausted")
-                # print(is_exhausted)
                 if self.bool_strategy_func(is_exhausted):
                     # if the stopping criteria is met, break the main for loop
-                    # print(f"StopIteration: all datasets exhausted")
                     break
 
     def shuffle_data_sources(self, generator: np.random.Generator) -> "CyclingMultiSourcesBatchesIterable":
@@ -324,7 +308,6 @@ class RandomlyCyclingMultiSourcesBatchesIterable(CyclingMultiSourcesBatchesItera
         self.generator = deepcopy(generator)
         self.probabilities = probabilities
         self.batch_size = int(batch_size)
-        # TODO(QL): implement iter_arrow
 
     @staticmethod
     def _iter_random_indices(
@@ -338,18 +321,10 @@ class RandomlyCyclingMultiSourcesBatchesIterable(CyclingMultiSourcesBatchesItera
         if p is None:
             # sample uniformly if p is not given
             while True:
-                # return [k for i in rng.integers(0, num_sources, size=sample_size) for k in [int(i)] * batch_size]
                 yield from (k for i in rng.integers(0, num_sources, size=sample_size) for k in [int(i)] * batch_size)
         else:
             while True:
                 yield from (k for i in rng.choice(num_sources, size=sample_size, p=p) for k in [int(i)] * batch_size)
-                '''
-                data_ids = [k for i in rng.choice(num_sources, size=sample_size, p=p) for k in [int(i)] * batch_size]
-                for i in range(sample_size):  # to check the purity of each batch
-                    if len(set(data_ids[batch_size * i: batch_size * (i + 1)])) != 1:
-                        print("not a pure batch?")
-                return data_ids
-                '''
 
     def _get_indices_iterator(self):
         rng = deepcopy(self.generator)

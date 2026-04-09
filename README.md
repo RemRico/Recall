@@ -1,266 +1,271 @@
-# Iterative Composed Image Retrieval
+# Recall: Iterative Composed Image Retrieval
 
-This project implements iterative training for composed image retrieval using VLM2Vec with hard negative mining and foundation model augmentation.
+Recall is an iterative training framework for **Composed Image Retrieval (CIR)** that combines hard negative mining with foundation model augmentation. Built on top of VLM2Vec, it supports multiple Vision-Language Model (VLM) backbones and achieves strong results on CIRR and FashionIQ benchmarks.
 
 ## Features
 
-- 🔄 **Iterative Training**: Progressive hard negative mining across multiple training rounds
-- 🎯 **Real Retrieval**: Actual VLM2Vec model inference instead of simulation
-- 🤖 **Foundation Model Integration**: Qwen2VL for caption generation and data augmentation
-- 💾 **Smart Caching**: Avoid repeated computations with checkpoint resumption
-- 📊 **Progress Tracking**: Real-time progress display with ETA estimation
-- 🔧 **Flexible Configuration**: Support for different model backbones and datasets
+- **Iterative Training**: Progressive hard negative mining across multiple training rounds, with independent optimizer/scheduler per iteration
+- **Multi-Backbone Support**: Qwen2-VL, Qwen2.5-VL, LLaVA-NeXT, and additional baselines (ColPali, GME, LamRA, InternVideo2, Phi-3V)
+- **Foundation Model Augmentation**: Uses a foundation VLM (e.g., Qwen2.5-VL-7B) to generate augmented captions from hard negative pairs
+- **Gradient Cache**: Memory-efficient contrastive learning via gradient caching for large batch training
+- **Distributed Training**: Multi-GPU support via `torchrun` with grouped sampling strategies
+- **Flexible Evaluation**: Unified evaluation pipeline for CIRR and FashionIQ with distributed inference
 
-## Quick Start
-
-### 1. Installation
+## Installation
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### 2. Basic Training
-
-```bash
-# Run iterative training with default settings
-./run_iterative_training.sh
-
-# Or run directly with Python
-python train_iterative.py \
-    --model_backbone qwen2_vl \
-    --dataset_name cirr \
-    --num_iterations 3 \
-    --foundation_model_path /path/to/qwen2-vl-model
-```
-
-### 3. Fast Mode (for testing)
-
-```bash
-# Quick test with subset of data
-./run_iterative_training.sh --fast_mode
-```
-
-## Configuration
-
-### Training Modes
-
-#### Fast Mode (for testing and debugging)
-```yaml
-# In your YAML config file
-fast_mode: true
-fast_mode_max_samples: 100        # Limit samples per iteration
-fast_mode_retrieval_db_size: 50   # Limit retrieval database size  
-fast_mode_max_steps: 5            # Limit training steps per iteration
-```
-
-#### Production Mode (for full training)
-```yaml
-# In your YAML config file  
-fast_mode: false
-production_max_steps: 1000        # Full training steps per iteration
-production_save_steps: 100        # Save frequency
-```
-
-### Key Parameters
-
-- `fast_mode`: Enable fast mode for quick testing (default: false)
-- `max_iterations`: Number of iterative rounds (default: 3)
-- `hard_neg_collection_freq`: Frequency of hard negative collection (default: 1)
-- `hard_neg_top_k`: Retrieval top-k retained for mining (default: 10)
-- `hard_neg_post_gt`: Additional negatives sampled after GT rank (default: 0)
-- `hard_neg_per_query`: Maximum hard negatives stored per query (default: 5)
-- `caption_generation_batch_size`: Batch size for caption generation (default: 8)
-- `foundation_model_name`: Foundation model for caption generation
-
-### Example Commands
-
-```bash
-# Full training with Qwen2VL foundation model
-python train_iterative.py \
-    --model_name Qwen/Qwen2-VL-2B-Instruct \
-    --output_dir ./experiments/iterative_cirr \
-    --dataset_config configs/cirr_iterative.yaml \
-    --foundation_model_name Qwen/Qwen2-VL-7B-Instruct \
-    --max_iterations 5
-
-# Auto resume from latest checkpoint
-python train_iterative.py \
-    --model_name Qwen/Qwen2-VL-2B-Instruct \
-    --output_dir ./experiments/iterative_cirr \
-    --resume_from auto \
-    --dataset_config configs/cirr_iterative.yaml
-
-# Resume from specific iteration
-python train_iterative.py \
-    --model_name Qwen/Qwen2-VL-2B-Instruct \
-    --output_dir ./experiments/iterative_cirr \
-    --resume_from iter_2 \
-    --dataset_config configs/cirr_iterative.yaml
-
-# Fast mode for debugging
-python train_iterative.py \
-    --model_name Qwen/Qwen2-VL-2B-Instruct \
-    --output_dir ./experiments/test_fast \
-    --dataset_config configs/cirr_iterative.yaml \
-    --fast_mode
-```
-
-## Resume Training
-
-### Resume Options
-
-1. **Auto Resume** (`--resume_from auto`): Automatically detects and resumes from the latest iteration checkpoint
-2. **Manual Resume** (`--resume_from iter_X`): Resumes from a specific iteration (e.g., `iter_2`)
-3. **Standard Checkpoint** (`--resume_from checkpoint-1000`): Resumes from a HuggingFace checkpoint
-4. **Fresh Start**: No resume parameter, starts training from scratch
-
-### File Structure
-
-```
-output_dir/
-├── base_model/                      # Iteration 0 base model
-├── iteration_1/                     # Iteration 1 model weights
-├── iteration_2/                     # Iteration 2 model weights
-├── iteration_3/                     # Iteration 3 model weights
-├── iteration_0_state.json           # Iteration 0 training state
-├── iteration_1_state.json           # Iteration 1 training state
-├── iteration_2_state.json           # Iteration 2 training state
-├── hard_negatives_iter_0.json       # Hard negatives for iteration 0
-├── hard_negatives_iter_1.json       # Hard negatives for iteration 1
-├── hard_negatives_iter_2.json       # Hard negatives for iteration 2
-├── augmented_samples_iter_1.json    # Augmented samples for iteration 1
-├── augmented_samples_iter_2.json    # Augmented samples for iteration 2
-├── augmented_samples_iter_3.json    # Augmented samples for iteration 3
-└── training_summary.json            # Training summary
-```
-
-### Resume Mechanism
-
-- **Model Loading**: Uses `MMEBModel.load()` for unified model weight management (supports both LoRA and full models)
-- **State Recovery**: Loads training state from `iteration_X_state.json`
-- **Data Recovery**: Restores dataset state from augmented samples and hard negatives
-- **Error Handling**: Automatically falls back to base model if checkpoint loading fails
-
-## Evaluation
-
-### Evaluate All Iterations
-
-```bash
-python eval_iterative.py \
-    --experiment_dir ./experiments/qwen2_vl_cirr_iterative \
-    --eval_dataset cirr_test
-```
-
-### Evaluate Specific Iterations
-
-```bash
-python eval_iterative.py \
-    --experiment_dir ./experiments/qwen2_vl_cirr_iterative \
-    --iterations "1,3,5" \
-    --output_file results.json
-```
+Key dependencies: PyTorch 2.6+, Transformers 4.52+, PEFT 0.11+, Flash Attention 2.6+.
 
 ## Project Structure
 
 ```
-├── src/
-│   ├── data/dataset/
-│   │   └── composed_retrieval_dataset.py  # Iterative CIRR dataset with real retrieval
-│   ├── trainer_iterative.py              # Iterative trainer implementation  
-│   ├── arguments.py                       # Training arguments definition
-│   └── ...
+Recall/
+├── train_iterative.py              # Main training entry point
+├── eval_cirr.py                    # CIRR evaluation script
+├── eval_fashioniq.py               # FashionIQ evaluation script
+├── cirr_test_submission.py         # CIRR test server submission generator
+├── retrieval_cirr.py               # Standalone CIRR retrieval (top-k results)
+├── run_iterative_training_paratuning.sh  # Training launcher script
+├── eval_cirr.sh                    # CIRR evaluation launcher
+├── eval_fashioniq.sh               # FashionIQ evaluation launcher
+├── run_fashioniq_training.sh       # FashionIQ training launcher
 ├── configs/
-│   └── cirr_iterative.yaml               # Iterative training configuration
-├── train_iterative.py                    # Main training script
-├── run_iterative_training.sh             # Training shell script
-└── experiments/                          # Experiment outputs
-    └── {experiment_name}/
-        ├── base_model/                    # Base model checkpoint (iteration 0)
-        ├── iteration_1/                   # Iteration 1 model checkpoint
-        ├── iteration_2/                   # Iteration 2 model checkpoint
-        ├── hard_negatives_iter_0.json     # Hard negatives per iteration
-        ├── hard_negatives_iter_1.json     
-        ├── augmented_samples_iter_1.json  # Generated augmented samples
-        ├── augmented_samples_iter_2.json
-        ├── iteration_0_state.json         # Training state per iteration
-        ├── iteration_1_state.json
-        └── training_summary.json          # Training summary and results
+│   ├── cirr_iterative.yaml         # CIRR iterative training config
+│   ├── cirr_eval_config.yaml       # CIRR evaluation config
+│   ├── fashioniq_iterative.yaml    # FashionIQ iterative training config
+│   └── fashioniq_eval_config.yaml  # FashionIQ evaluation config
+├── src/
+│   ├── arguments.py                # Training/model/data argument definitions
+│   ├── loss.py                     # Contrastive loss functions
+│   ├── trainer.py                  # Base MMEBTrainer (extends HF Trainer)
+│   ├── trainer_iterative_.py       # Iterative trainer with mining/augmentation
+│   ├── dist_utils.py               # Distributed training utilities
+│   ├── aug/                        # Caption augmentation pipeline
+│   │   ├── batchers.py
+│   │   ├── caption_generator.py
+│   │   └── validators.py
+│   ├── data/
+│   │   ├── dataset/
+│   │   │   ├── base_iterative_dataset.py  # Base iterative dataset
+│   │   │   ├── cirr.py                    # CIRR dataset
+│   │   │   ├── fashioniq.py               # FashionIQ dataset
+│   │   │   └── hf_datasets.py             # HuggingFace dataset integration
+│   │   ├── collator/              # Train/eval data collators
+│   │   ├── loader/                # Mixed dataset loader
+│   │   ├── sampler/               # Grouped & category samplers
+│   │   └── utils/                 # Vision & dataset utilities
+│   ├── evaluation/
+│   │   ├── cirr_evaluator.py      # CIRR evaluator
+│   │   └── fashioniq_evaluator.py # FashionIQ evaluator
+│   ├── grad_cache/                # Gradient cache implementation
+│   ├── mining/
+│   │   └── hard_negative.py       # Hard negative mining
+│   ├── model/
+│   │   ├── model.py               # MMEBModel (main model wrapper)
+│   │   ├── processor.py           # Processor loading & backbone detection
+│   │   ├── baseline_backbone/     # Baseline model implementations
+│   │   └── vlm_backbone/          # VLM backbone implementations (Qwen2-VL, etc.)
+│   ├── prompt/                    # Prompt builders for different VLMs
+│   │   ├── qwen/                  # Qwen-specific prompts
+│   │   ├── llava/                 # LLaVA-specific prompts
+│   │   └── generic/               # Generic prompt builder
+│   ├── retrieval/
+│   │   ├── candidate_builder.py   # Retrieval candidate management
+│   │   ├── embedding_cache.py     # Embedding caching
+│   │   └── engine.py              # Retrieval engine
+│   └── utils/                     # General utilities (logging, paths, etc.)
+└── experiments/                   # Output directory for training runs
+```
+
+## Supported Models
+
+| Model | Backbone Key | Notes |
+|-------|-------------|-------|
+| Qwen2-VL-2B-Instruct | `qwen2_vl` | Lightweight, fast training |
+| Qwen2-VL-7B-Instruct | `qwen2_vl` | Default backbone |
+| Qwen2.5-VL-7B-Instruct | `qwen2_5_vl` | Improved VL model |
+| LLaVA-NeXT-7B | `llava_next` | Alternative backbone |
+| ColPali, GME, LamRA, InternVideo2, Phi-3V | various | Baseline comparisons |
+
+## Datasets
+
+### CIRR (Composed Image Retrieval on Real-life Images)
+- Image-text composed retrieval on natural images
+- Train/dev/test splits with group-level evaluation
+- Config: `configs/cirr_iterative.yaml`
+
+### FashionIQ
+- Fashion domain composed retrieval across categories (dress, shirt, toptee)
+- Category-aware sampling and evaluation
+- Config: `configs/fashioniq_iterative.yaml`
+
+## Training
+
+### Quick Start
+
+```bash
+# CIRR training with Qwen2.5-VL-7B on 2 GPUs
+./run_iterative_training_paratuning.sh cirr qwen2_5vl_7b 2
+
+# FashionIQ training
+./run_fashioniq_training.sh
+```
+
+### Direct Python Training
+
+```bash
+python train_iterative.py \
+    --model_name /path/to/Qwen2.5-VL-7B-Instruct \
+    --foundation_model_name /path/to/Qwen2.5-VL-7B-Instruct \
+    --lora --lora_r 64 \
+    --pooling eos --normalize True \
+    --dataset_config configs/cirr_iterative.yaml \
+    --output_dir ./experiments/my_experiment \
+    --per_device_train_batch_size 64 \
+    --learning_rate 2e-5 \
+    --bf16 True \
+    --group_by_reference_image
+```
+
+### Resume Training
+
+```bash
+# Resume from an existing experiment directory
+./run_iterative_training_paratuning.sh cirr qwen2_5vl_7b 2 ./experiments/existing_run
+
+# Or via Python with auto-resume
+python train_iterative.py \
+    --output_dir ./experiments/existing_run \
+    --dataset_config configs/cirr_iterative.yaml \
+    --resume_from auto \
+    --resume_from_iteration auto
+```
+
+The training script supports two independent resume mechanisms:
+- `--resume_from auto|<step>|none`: Resumes trainer state (optimizer, scheduler) from HuggingFace checkpoints
+- `--resume_from_iteration auto|iter_<N>|none`: Resumes from iteration-level model weights
+
+### Output Structure
+
+```
+experiments/<experiment_name>/
+├── base_model/                  # Iteration 0 final model
+├── iteration_1/                 # Iteration 1 final model
+├── iteration_2/                 # Iteration 2 final model
+├── training_iter_0/             # Iteration 0 training checkpoints
+│   ├── checkpoint-500/
+│   └── checkpoint-1000/
+├── training_iter_1/             # Iteration 1 training checkpoints
+├── iteration_0_state.json       # Iteration 0 training state
+├── iteration_1_state.json
+├── hard_negatives_iter_0.json   # Mined hard negatives
+├── augmented_samples_iter_1.json # Generated augmented samples
+└── training_output.log
+```
+
+## Evaluation
+
+### CIRR Evaluation
+
+```bash
+# Using the shell script (auto-detects multi-GPU)
+./eval_cirr.sh --model_path ./experiments/my_run/iteration_1 --output_file results/cirr_eval.json
+
+# Single GPU mode
+./eval_cirr.sh --model_path ./experiments/my_run/iteration_1 --single-gpu
+
+# Direct Python
+python eval_cirr.py \
+    --model_path ./experiments/my_run/iteration_1 \
+    --batch_size 8 \
+    --output_file results/cirr_eval.json
+```
+
+### FashionIQ Evaluation
+
+```bash
+./eval_fashioniq.sh /path/to/checkpoint 0 Qwen/Qwen2.5-VL-7B-Instruct
+```
+
+### CIRR Test Submission
+
+Generate submission files for the [CIRR evaluation server](https://cirr.cecs.anu.edu.au/):
+
+```bash
+python cirr_test_submission.py \
+    --model_path /path/to/checkpoint \
+    --submission_name my_submission \
+    --output_dir ./submission/CIRR
+```
+
+This produces `recall_submission_*.json` (global Top-50) and `recall_subset_submission_*.json` (group Top-3).
+
+### Standalone Retrieval
+
+```bash
+python retrieval_cirr.py \
+    --model_path /path/to/checkpoint \
+    --top_k 10 \
+    --batch_size 8
+```
+
+## Configuration
+
+Training configurations are defined in YAML files under `configs/`. Key parameters:
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `max_iterations` | Number of iterative training rounds | 2 |
+| `fast_mode` | Enable fast mode for debugging | false |
+| `steps_per_iteration` | Training steps per iteration | 5000 |
+| `hard_neg_top_k` | Top-k candidates for hard negative mining | 10 |
+| `hard_neg_per_query` | Max hard negatives per query | 5 |
+| `caption_generation_batch_size` | Batch size for caption augmentation | 16 |
+| `foundation_model_name` | VLM for caption generation | Qwen2.5-VL-7B |
+
+### Fast Mode (for debugging)
+
+```yaml
+fast_mode: true
+fast_mode_max_samples: 200
+fast_mode_retrieval_db_size: 100
+fast_mode_max_steps: 20
 ```
 
 ## How It Works
 
-### 1. Iterative Training Loop
+### Iterative Training Loop
 
 ```
-For each iteration:
-1. Mine hard negatives using current model
-2. Generate augmented captions with foundation model
-3. Train on original + augmented data
-4. Save checkpoint
+For each iteration (0, 1, ..., max_iterations-1):
+    1. Encode all training images & queries with current model
+    2. Mine hard negatives via top-k retrieval
+    3. Generate augmented captions using foundation VLM
+    4. Train on original + augmented data with InfoNCE loss
+    5. Save iteration checkpoint
+    6. (Optional) Evaluate on validation set
 ```
 
-### 2. Hard Negative Mining
+### Hard Negative Mining
 
-- Uses real VLM2Vec retrieval on training data
-- Identifies samples where ground truth is not top-1
-- Collects top-ranked incorrect results as hard negatives
+The retrieval engine encodes all candidates and queries, computes cosine similarity, and identifies queries where the ground truth is not ranked first. Top-ranked incorrect results become hard negatives for the next training iteration.
 
-### 3. Caption Augmentation
+### Caption Augmentation
 
-- Foundation model (Qwen2VL) generates new modification texts
-- Input: reference image + target image + original caption
-- Output: similar but different modification text
-- Creates positive samples from previous hard negatives
-
-### 4. Smart Caching
-
-- Caches hard negatives to avoid re-mining
-- Saves augmented samples for checkpoint resumption
-- Experiment directory tracks all intermediate results
-
-## Advanced Features
-
-### Real vs Simulated Retrieval
-
-- **Real Retrieval**: Actual VLM2Vec model inference (default)
-- **Simulated Retrieval**: Fast dummy results for testing
-- Automatic fallback if real retrieval fails
-
-### Progress Tracking
-
-- Batch-level progress with ETA estimation
-- Generation rate monitoring
-- Comprehensive logging and statistics
-
-### Foundation Model Support
-
-- Qwen2VL: Multi-image conversation format
-- LLaVA: Horizontal image concatenation
-- Generic: Fallback for other models
-
-## Troubleshooting
-
-### Common Issues
-
-1. **Memory Issues**: Reduce batch size or use fast mode
-2. **Foundation Model Loading**: Check model path and permissions
-3. **Checkpoint Resumption**: Verify experiment directory structure
-
-### Debug Mode
-
-```bash
-# Enable detailed logging
-PYTHONPATH=. python train_iterative.py --fast_mode --num_iterations 1
-```
+A foundation VLM (e.g., Qwen2.5-VL-7B) generates alternative modification texts given (reference image, target image, original caption) triples. These augmented samples create additional positive pairs from previously mined hard negatives.
 
 ## Citation
 
-If you use this work, please cite:
-
 ```bibtex
-@article{iterative_cir_2025,
-  title={Iterative Training for Composed Image Retrieval with Hard Negative Mining},
-  author={Your Name},
+@article{recall2025,
+  title={Recall: Iterative Training for Composed Image Retrieval with Hard Negative Mining},
   year={2025}
 }
 ```
+
+## License
+
+This project is for research purposes. Please refer to the individual model licenses for the VLM backbones used.

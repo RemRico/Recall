@@ -126,10 +126,10 @@ def load_processor(model_args, data_args=None):
         from src.model.vlm_backbone.qwen2_vl.image_processing_qwen2_vl import Qwen2VLImageProcessor
         from src.model.vlm_backbone.qwen2_vl.tokenization_qwen2_fast import Qwen2TokenizerFast
 
-        # 1) 读取配置
+        # 1) Read configuration.
         do_resize = True
-        min_pixels = 56*56          # 默认最小面积：与官方一致（3136）
-        max_pixels = 28*28*1280     # 默认最大面积：与官方一致（1003520）
+        min_pixels = 56 * 56
+        max_pixels = 28 * 28 * 1280
         if data_args is not None:
             do_resize = data_args.resize_use_processor
             if getattr(data_args, "resize_min_pixels", None) is not None:
@@ -137,22 +137,16 @@ def load_processor(model_args, data_args=None):
             if getattr(data_args, "resize_max_pixels", None) is not None:
                 max_pixels = int(data_args.resize_max_pixels)
 
-        # 2) 载入
+        # 2) Load processor components.
         image_processor = Qwen2VLImageProcessor.from_pretrained(model_name_or_path)
 
-        # 3) 统一设置：属性 + size 两处都覆盖，且只用官方认可的两个键
+        # 3) Apply runtime overrides.
         if hasattr(image_processor, "do_resize"):
             image_processor.do_resize = do_resize
         if hasattr(image_processor, "min_pixels"):
             image_processor.min_pixels = min_pixels
         if hasattr(image_processor, "max_pixels"):
             image_processor.max_pixels = max_pixels
-
-        # # 注意：size 的键是“面积”，不是边长
-        # image_processor.size = {
-        #     "shortest_edge": min_pixels,   # 最小面积
-        #     "longest_edge":  max_pixels    # 最大面积
-        # }
 
         tokenizer = Qwen2TokenizerFast.from_pretrained(model_name_or_path)
         processor = Qwen2VLProcessor.from_pretrained(
@@ -189,7 +183,7 @@ def load_processor(model_args, data_args=None):
         from src.model.vlm_backbone.qwen2_5_vl.image_processing_qwen2_5_vl import Qwen2_5_VLImageProcessor
         from src.model.vlm_backbone.qwen2_vl.tokenization_qwen2_fast import Qwen2TokenizerFast
 
-        # 读取用户参数（允许 None -> 使用模型默认）
+        # Read user overrides (None means using model defaults).
         user_do_resize = True
         user_min_pixels = None
         user_max_pixels = None
@@ -198,18 +192,18 @@ def load_processor(model_args, data_args=None):
             user_min_pixels = getattr(data_args, 'resize_min_pixels', None)
             user_max_pixels = getattr(data_args, 'resize_max_pixels', None)
 
-        # 先按模型默认加载（会读取 preprocessor_config.json）
+        # Load processor defaults first (from preprocessor_config.json).
         image_processor = Qwen2_5_VLImageProcessor.from_pretrained(model_name_or_path)
 
-        # 采集模型默认值
+        # Capture default values.
         default_min = getattr(image_processor, 'min_pixels', None)
         default_max = getattr(image_processor, 'max_pixels', None)
 
-        # 计算最终值（用户优先）
+        # Resolve final values (user overrides first).
         final_min = int(user_min_pixels) if user_min_pixels is not None else default_min
         final_max = int(user_max_pixels) if user_max_pixels is not None else default_max
 
-        # 覆盖属性
+        # Override image processor attributes.
         if hasattr(image_processor, 'do_resize'):
             image_processor.do_resize = user_do_resize
         if hasattr(image_processor, 'min_pixels') and final_min is not None:
@@ -217,7 +211,7 @@ def load_processor(model_args, data_args=None):
         if hasattr(image_processor, 'max_pixels') and final_max is not None:
             image_processor.max_pixels = final_max
 
-        # 同步 size 字典（不同版本字段可能不同，做存在性检查）
+        # Sync the `size` dictionary (field names differ across versions).
         if hasattr(image_processor, 'size') and isinstance(image_processor.size, dict):
             if final_min is not None:
                 image_processor.size['min_pixels'] = final_min
@@ -241,7 +235,6 @@ def load_processor(model_args, data_args=None):
             f"(user_min={user_min_pixels}, user_max={user_max_pixels}, default_min={default_min}, default_max={default_max})"
         )
     elif model_args.model_backbone == QWEN2_5_VL_TOKENSELECTION:
-        # TODO: qwen2.5 token selection not working yet
         from src.model.vlm_backbone.qwen2_5_vl_tokenselection.processing_qwen2_5_vl import Qwen2_5_VLProcessor
         from src.model.vlm_backbone.qwen2_5_vl_tokenselection.image_processing_qwen2_5_vl import Qwen2_5_VLImageProcessor
         from src.model.vlm_backbone.qwen2_vl_tokenselection.tokenization_qwen2_fast import Qwen2TokenizerFast
@@ -316,7 +309,6 @@ def get_backbone_name(hf_config, model_type=None):
 
 
 def Llava_NEXT_process_fn(model_inputs: dict, processor, max_length=None):
-    # TODO: NOT FINISHED YET!
     input_ids, pixel_values, image_sizes = [], [], []
     texts, visual_inputs = model_inputs['text'], model_inputs['images']
     image_exists = False
@@ -348,8 +340,6 @@ def Llava_NEXT_process_fn(model_inputs: dict, processor, max_length=None):
     inputs = {
         'input_ids': input_ids.long(),
         'attention_mask': attention_mask,
-        # 'texts': texts,
-        # 'images': visual_inputs,
     }
     image_exists = any([p is not None for p in pixel_values])
     if image_exists:
@@ -419,10 +409,8 @@ def Phi3V_process_fn(model_inputs: dict, processor, max_length=None):
 
 
 def Qwen2_VL_process_fn(model_inputs: dict, processor: Qwen2VLProcessor, max_length=None):
-    # TODO: set separate max_len for text/visual inputs, currently max_length is only applied to text-only data
     input_ids, pixel_values, image_grid_thw, pixel_values_videos, video_grid_thw = [], [], [], [], []
     texts, visual_inputs = model_inputs['text'], model_inputs['images']
-    image_exists = False
     vlm_image_token, vlm_video_token = VLM_IMAGE_TOKENS[QWEN2_VL], VLM_VIDEO_TOKENS[QWEN2_VL]
 
     # 1. iterate each pair and process, since processors do not support processing for mixed batch (contains data w/ and w/o visual inputs)
@@ -459,7 +447,6 @@ def Qwen2_VL_process_fn(model_inputs: dict, processor: Qwen2VLProcessor, max_len
                         input_data_format=ChannelDimension.LAST,
                     )
                 elif vlm_video_token in text:
-                    # TODO: check text/video data validity
                     inputs = processor(
                         text=[text], 
                         videos=[images], 
@@ -471,9 +458,9 @@ def Qwen2_VL_process_fn(model_inputs: dict, processor: Qwen2VLProcessor, max_len
                 else:
                     raise NotImplementedError(f"No visual token found ({vlm_image_token} or {vlm_video_token}) in the text: {text}")
             except Exception as e:
-                print(f"Error in Qwen2_VL_process_fn: {e}")
+                logger.exception("Error in Qwen2_VL_process_fn: %s", e)
                 for i, img in enumerate(images):
-                    print(f"Image {i}: {type(img)}, size: {getattr(img, 'size', 'unknown')}")
+                    logger.error("Image %d: %s, size=%s", i, type(img), getattr(img, 'size', 'unknown'))
                 raise e
             input_ids.append(inputs["input_ids"].squeeze().tolist())
             if 'pixel_values' in inputs:
@@ -538,7 +525,6 @@ def Gme_process_fn(model_inputs: dict, processor: Qwen2VLProcessor, max_length=N
 
 
 def Qwen2_VL_TokenSelection_process_fn(model_inputs: dict, processor: Qwen2VLTokenSelectionProcessor, max_length=None):
-    # TODO: set separate max_len for text/visual inputs, currently max_length is only applied to text-only data
     input_ids, pixel_values, image_grid_thw, pixel_values_videos, video_grid_thw = [], [], [], [], []
     patch_pos, select_mask = [], []
     texts, visual_inputs = model_inputs['text'], model_inputs['images']
@@ -562,8 +548,7 @@ def Qwen2_VL_TokenSelection_process_fn(model_inputs: dict, processor: Qwen2VLTok
             video_grid_thw.append(None)
         else:
             image_exists = True
-            # TODO only
-            # handling multi-image data from videos, cannot deal with mixed image + video data
+            # Handles multi-image inputs and video-frame sequences.
             if VLM_IMAGE_TOKENS[QWEN2_VL] in text:
                 inputs = processor(text=[text], images=[images], return_tensors="np", max_length=None, truncation=False, input_data_format=ChannelDimension.LAST)
             elif VLM_VIDEO_TOKENS[QWEN2_VL] in text:
@@ -627,7 +612,6 @@ def Qwen2_VL_TokenSelection_process_fn(model_inputs: dict, processor: Qwen2VLTok
 
 
 def InternVL_process_fn(model_inputs: dict, processor, max_length=None):
-    # TODO not working yet
     input_ids, pixel_values, image_sizes, image_grid_thw = [], [], [], []
     texts, images = model_inputs['text'], model_inputs['images']
     image_exists = False
@@ -749,9 +733,12 @@ def e5_v_prompt_template(text, add_video_token, add_image_token):
 
 
 def qwen_retrieval_prompt_template(text, add_video_token, add_image_token):
-    """Qwen 系列用于检索的 prompt 模板。
-    注意：此处无法得知实际图片数量，因此当存在图片/视频时，各添加一个占位片段。
-    若需要精确重复次数，可在调用处传入组合好的文本（包含多次占位符）。
+    """Prompt template for Qwen retrieval encoding.
+
+    The function does not know the exact image/video count at this stage, so
+    it inserts a single placeholder token when an image/video modality exists.
+    If precise repetition is required, pass a precomposed input string with
+    repeated placeholders from the caller side.
     """
     system_prompt = ("You are a multimodal retrieval encoder (not a conversational assistant). "
                      "Your sole function is to map any input—image(s), text, or image(s) plus text—into a "
@@ -777,12 +764,11 @@ PROMPT_TEMPLATE_DICT = {
 
 
 def process_input_text(instruction, model_backbone, text=None, add_video_token=False, add_image_token=False):
-    # Formulate input text based on text, special token and instruction.
-    # TBD: Reorganize the hard-code part for baselines such as internvideo2
+    # Formulate input text based on instruction, modality tokens, and backbone rules.
     if model_backbone == "internvideo2":
         return text
     elif model_backbone in [QWEN2_VL, QWEN2_5_VL, QWEN2_VL_TOKENSELECTION, QWEN2_5_VL_TOKENSELECTION]:
-        # 组合 instruction 与文本，按用户要求将其接在视觉占位符之后
+        # Combine instruction and text content.
         combined_text = instruction if instruction else ""
         if text:
             combined_text = (combined_text + " " + text) if combined_text else text
@@ -795,7 +781,7 @@ def process_input_text(instruction, model_backbone, text=None, add_video_token=F
             parts.append(text)
         return " ".join(parts)
     elif model_backbone == E5_V:
-        # e5_v 模板沿用原逻辑
+        # Keep E5-V template behavior.
         return PROMPT_TEMPLATE_DICT[model_backbone](text, add_video_token, add_image_token)
 
     prompt = instruction
@@ -806,7 +792,6 @@ def process_input_text(instruction, model_backbone, text=None, add_video_token=F
         prompt = video_token + " " + prompt
     if add_image_token:
         image_token = VLM_IMAGE_TOKENS[model_backbone]
-        # image_token = "<|vision_start|>"+VLM_IMAGE_TOKENS[model_backbone]+"<|vision_end|>"
         prompt = image_token + " " + prompt
 
     return prompt

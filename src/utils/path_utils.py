@@ -6,10 +6,10 @@ import glob
 
 def normalize_path(path: str) -> str:
     """
-    规范化路径：
-    - 展开用户目录与环境变量
-    - 归一化分隔符/.. 等
-    - 不强制转绝对，交给上层决定
+    Normalize a path:
+    - Expand user-home and environment variables
+    - Normalize separators and relative markers such as `..`
+    - Do not force absolute conversion (caller decides)
     """
     if not isinstance(path, str):
         path = str(path)
@@ -17,11 +17,11 @@ def normalize_path(path: str) -> str:
 
 def get_full_image_path(image_path: str, base_dir: str) -> str:
     """
-    与你原逻辑等价的统一路径拼接：
-    - 如果是 './xxx'，去掉 './' 再与 base_dir 合并
-    - 如果是绝对路径，直接返回
-    - 否则按相对路径与 base_dir 合并
-    - 最后做一次 normalize
+    Unified path join equivalent to the original behavior:
+    - If input is './xxx', strip './' and join with `base_dir`
+    - If input is absolute, return as-is
+    - Otherwise join relative path with `base_dir`
+    - Normalize once before returning
     """
     if not isinstance(image_path, str):
         image_path = str(image_path)

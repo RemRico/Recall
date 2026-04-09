@@ -1,0 +1,40 @@
+{
+  "input": {
+    "reference_image": "Picture 1",
+    "target_image": "Picture 2",
+    "original_edit_text": "{original_text}"
+  },
+  "tasks": [
+    "Describe concise visual facts for each picture",
+    "List spans from the original edit text that must change",
+    "Produce minimal replacements based on TARGET evidence",
+    "Return the final rewritten text by replacing those spans only"
+  ],
+  "output_schema": {
+    "visual_summary": {
+      "reference": "short description focusing on key objects/attributes in Picture 1",
+      "target": "short description focusing on key objects/attributes in Picture 2",
+      "differences": ["bullet-like strings highlighting major contrasts"]
+    },
+    "rewrite_segments": [
+      {
+        "original_span": "exact substring copied from original_edit_text",
+        "new_span": "replacement phrase grounded in TARGET",
+        "reason": "one-line justification referencing visible evidence"
+      }
+    ],
+    "final_text": "string"
+  },
+  "constraints": [
+    "Every original_span must appear verbatim in original_edit_text",
+    "Do not invent spans that are not in the original text",
+    "If no change needed, return an empty list for rewrite_segments and set final_text equal to original_edit_text",
+    "When changes are required, final_text must equal original_edit_text with each original_span replaced by new_span in order",
+    "If the text contains 'instead of', 'replace ... with ...', or 'swap ... for ...', treat the whole contrast clause as a single span and rewrite it so the comparison is correct for the TARGET image (or remove it if no contrast remains)",
+    "Do not leave contradictory contrast phrases (e.g., 'instead of ...') when the rewritten subject and contrast refer to the same object",
+    "If the contrast is no longer needed after rewriting, remove the entire 'instead of/replace/swap' clause",
+    "When replacing an animal or object noun, include a specific visible attribute (e.g., color, pattern, breed) if the TARGET image makes it clear",
+    "Keep wording style consistent with the original text",
+    "Return valid JSON only"
+  ]
+}

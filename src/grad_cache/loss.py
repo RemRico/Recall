@@ -17,7 +17,6 @@ class InExampleContrastiveLoss:
         self.ndim = ndim
 
     def __call__(self, x: Tensor, y: Tensor, reduction: str = 'mean'):
-        # print("gather InExampleContrastiveLoss")
         if torch.distributed.is_initialized():
             x = dist_utils.dist_gather(x)
             y = dist_utils.dist_gather(y)
@@ -40,7 +39,6 @@ class SimpleContrastiveLoss:
         self.temperature = temperature
 
     def __call__(self, x: Tensor, y: Tensor, target: Tensor = None, reduction: str = 'mean'):
-        # print("gather SimpleContrastiveLoss")
         if target is None:
             assert x.size(0) * self.target_per_qry == y.size(0)
             target = torch.arange(0, y.size(0), step=self.target_per_qry, dtype=torch.long, device=x.device)
@@ -60,7 +58,6 @@ class DistributedContrastiveLoss(SimpleContrastiveLoss):
         self.rank = dist.get_rank()
 
     def __call__(self, x: Tensor, y: Tensor, **kwargs):
-        # print("gather DistributedContrastiveLoss")
         dist_x = self.gather_tensor(x)
         dist_y = self.gather_tensor(y)
 

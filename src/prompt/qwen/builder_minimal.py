@@ -7,7 +7,7 @@ import json
 import os
 import re
 import time
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import torch
 from PIL import Image
@@ -51,9 +51,9 @@ def prepare_inputs_minimal(
     original_text: str,
     processor,
     device: str,
-    dataset_name: str = None,
+    dataset_name: Optional[str] = None,
 ):
-    # Select prompt files based on dataset
+    # Select prompt files based on dataset.
     if dataset_name == "FashionIQ":
         sys_txt = os.path.join(_THIS_DIR, "system_prompt_minimal_fashioniq.txt")
         template_txt = os.path.join(_THIS_DIR, "minimal_template_fashioniq.txt")
@@ -134,15 +134,15 @@ def generate_with_qwen_minimal(inputs, device: str, foundation_model) -> str:
 def _extract_json_block(raw_text: str) -> str | None:
     if not raw_text:
         return None
-    # Try direct JSON
+    # Try direct JSON.
     raw_text = raw_text.strip()
     if raw_text.startswith("{") and raw_text.endswith("}"):
         return raw_text
-    # Try code block
+    # Try code block.
     match = re.search(r"```json\s*(\{.*\})\s*```", raw_text, re.DOTALL)
     if match:
         return match.group(1)
-    # Fallback: brace extraction
+    # Fallback: brace extraction.
     match = re.search(r"(\{.*\})", raw_text, re.DOTALL)
     if match:
         return match.group(1)
@@ -153,7 +153,7 @@ def parse_minimal_output(raw_text: str) -> Dict | None:
     json_str = _extract_json_block(raw_text)
     if not json_str:
         return None
-    # Fix common formatting issues (missing commas between list items)
+    # Fix common formatting issues (missing commas between list items).
     json_str = re.sub(r'"\s*"-', '", "-', json_str)
     json_str = re.sub(r'"\s+"-', '", "-', json_str)
     json_str = re.sub(r'"\s*\"-', '", "-', json_str)
@@ -212,7 +212,7 @@ def validate_minimal_output(original_text: str, parsed: Dict) -> Tuple[bool, str
     if final_text != reconstructed:
         return False, "final_text mismatch reconstructed text", reconstructed
 
-    # Check for contradictory contrast phrases
+    # Check for contradictory contrast phrases.
     if "instead of" in reconstructed.lower():
         lower = reconstructed.lower()
         parts = lower.split("instead of")
@@ -248,7 +248,7 @@ def run_minimal_pipeline(
     processor,
     device: str,
     foundation_model,
-    dataset_name: str = None,
+    dataset_name: Optional[str] = None,
 ) -> Dict:
     inputs, system_prompt, payload, chat_prompt = prepare_inputs_minimal(
         ref_image, target_image, original_text, processor, device, dataset_name

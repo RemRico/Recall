@@ -1,7 +1,9 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
-import os, random
+import os
+import random
 from typing import Dict
+
 from PIL import Image as PILImage
 import numpy as np
 
@@ -16,22 +18,28 @@ def _load_templates():
     for line in raw.splitlines():
         t = line.strip()
         if t == "[[HARD_NEGATIVE]]":
-            bucket = hard; continue
+            bucket = hard
+            continue
         if t == "[[DIVERSITY]]":
-            bucket = diversity; continue
+            bucket = diversity
+            continue
         if bucket is not None:
             if t and not t.startswith("#"):
                 bucket.append(line)
-    # split by blank lines
+
+    # Split by blank lines.
     def split_blocks(lines):
         blocks, cur = [], []
         for ln in lines:
             if ln.strip() == "" and cur:
-                blocks.append("\n".join(cur).strip()); cur=[]
+                blocks.append("\n".join(cur).strip())
+                cur = []
             else:
                 cur.append(ln)
-        if cur: blocks.append("\n".join(cur).strip())
+        if cur:
+            blocks.append("\n".join(cur).strip())
         return blocks
+
     return split_blocks(hard), split_blocks(diversity)
 
 _HARD, _DIV = _load_templates()
@@ -45,12 +53,12 @@ def create_llava_prompt_enhanced(original_text: str, is_hard_negative_context: b
     return tmpl.replace("{text}", original_text)
 
 def _concat_side_by_side(ref_img, target_img):
-    # ref_img, target_img: PIL Images
+    # `ref_img` and `target_img` are PIL images.
     ref = np.array(ref_img)
     tgt = np.array(target_img)
     h = min(ref.shape[0], tgt.shape[0])
-    ref_resized = PILImage.fromarray(ref).resize((int(ref.shape[1]*h/ref.shape[0]), h))
-    tgt_resized = PILImage.fromarray(tgt).resize((int(tgt.shape[1]*h/tgt.shape[0]), h))
+    ref_resized = PILImage.fromarray(ref).resize((int(ref.shape[1] * h / ref.shape[0]), h))
+    tgt_resized = PILImage.fromarray(tgt).resize((int(tgt.shape[1] * h / tgt.shape[0]), h))
     canvas = PILImage.new("RGB", (ref_resized.width + tgt_resized.width, h))
     canvas.paste(ref_resized, (0, 0))
     canvas.paste(tgt_resized, (ref_resized.width, 0))

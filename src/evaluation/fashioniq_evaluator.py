@@ -253,7 +253,7 @@ class FashionIQEvaluator:
                 if embeddings.dim() == 1:
                     embeddings = embeddings.unsqueeze(0)
                 elif embeddings.dim() > 2:
-                    embeddings = embeddings = embeddings.view(embeddings.size(0), -1)
+                    embeddings = embeddings.view(embeddings.size(0), -1)
                 return embeddings.cpu()
         except Exception as e:
             print_rank(f"Error in encoding: {e}")
@@ -295,7 +295,6 @@ class FashionIQEvaluator:
                 # Use the same instruction as training target images
                 text = process_input_text(
                     instruction="Represent the given image in one word:",
-                    # instruction="Represent the given image",
                     model_backbone=self.model_backbone,
                     text="",
                     add_image_token=True,
@@ -372,8 +371,6 @@ class FashionIQEvaluator:
                 # Format text with category-aware prompt and add image token
                 # MUST match training prompt EXACTLY
                 instruction = f"Change the style of this {cat} to <{caption}>\nRepresent the modified {cat} in one word:" if caption else ""
-                # instruction = f"Modify this image with <{caption}>\nRepresent the modified image in one word:"
-                # instruction = f"Find an image to match the fashion image and style note.\n{caption}"  # 🔥 Fixed: removed trailing comma
                 formatted_text = process_input_text(
                     instruction=instruction,
                     model_backbone=self.model_backbone,
@@ -692,21 +689,6 @@ class FashionIQEvaluator:
             # Compute similarities
             print_master(f"Computing similarity matrix for {cat}...")
             sims = torch.mm(qry_emb, cand_emb.t())
-            
-            # Debug: Print first query's top-10 results and similarity scores
-            if len(queries) > 0 and len(candidates) > 0:
-                first_query = queries[0]
-                first_sims = sims[0]
-                top_k_vals, top_k_indices = torch.topk(first_sims, k=min(10, len(candidates)))
-                print_master(f"\nDebug - First query:")
-                print_master(f"  Reference: {first_query.get('reference', 'N/A')}")
-                print_master(f"  Target: {first_query.get('target_hard', 'N/A')}")
-                print_master(f"  Caption: {first_query.get('caption', 'N/A')}")
-                print_master(f"  Top-10 candidates (similarity scores):")
-                for i, (idx, sim) in enumerate(zip(top_k_indices[:10], top_k_vals[:10])):
-                    cand_name = candidates[idx.item()]
-                    is_target = '✓ TARGET' if cand_name.replace('.png', '') == first_query.get('target_hard', '') else ''
-                    print_master(f"    {i+1}. {cand_name} (sim: {sim.item():.4f}) {is_target}")
             
             # Compute metrics
             print_master(f"Computing recall metrics for {cat}...")

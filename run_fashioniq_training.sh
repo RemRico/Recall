@@ -1,29 +1,22 @@
 #!/usr/bin/env bash
-# FashionIQ Training Script for MyComposedRetrieval
+# FashionIQ iterative training launcher.
 # Usage:
 #   ./run_fashioniq_training.sh [model_type] [num_gpus] [existing_exp_dir] [use_minimal_prompt]
-# Examples:
-#   ./run_fashioniq_training.sh qwen2_5vl_7b 8
-#   ./run_fashioniq_training.sh qwen3vl_8b 4
-#   ./run_fashioniq_training.sh qwen2_5vl_7b 8 ./experiments/IterativeFashionIQ_qwen2_5vl_7b_20250101_120000
-#   ./run_fashioniq_training.sh qwen2_5vl_7b 8 "" true  # Use minimal prompt
 
 set -euo pipefail
 
-# -------------------------- Configuration --------------------------
-MODEL_TYPE=${1:-"qwen2_5vl_7b"}   # qwen2vl | qwen2vl_2b | qwen2_5vl_7b | qwen3vl_8b
-NUM_GPUS=${2:-8}                   # default 8 GPUs
-EXISTING_EXP_DIR=${3:-""}          # optional: resume from existing experiment dir
-USE_MINIMAL_PROMPT=${4:-"true"}    # true | false - use minimal rewrite prompt (default: true)
+MODEL_TYPE=${1:-"qwen2_5vl_7b"}
+NUM_GPUS=${2:-8}
+EXISTING_EXP_DIR=${3:-""}
+USE_MINIMAL_PROMPT=${4:-"true"}
 
-# LoRA settings
 LORA_R=16
 LORA_DROPOUT=0.1
 
-# Local model paths (adjust these to your local paths)
 QWEN2VL_2B_PATH="/home/guohaiyun/yangtianyu/CPRCIR/checkpoints/hf_models/Qwen2-VL-2B-Instruct"
 QWEN2VL_7B_PATH="/home/guohaiyun/yangtianyu/CPRCIR/checkpoints/hf_models/Qwen2-VL-7B-Instruct"
 QWEN2_5VL_7B_PATH="/home/guohaiyun/yangtianyu/CPRCIR/checkpoints/hf_models/Qwen2.5-VL-7B-Instruct"
+QWEN3VL_8B_PATH="/home/guohaiyun/yangtianyu/CPRCIR/checkpoints/hf_models/Qwen3-VL-8B-Instruct"
 
 echo "==> Starting FashionIQ iterative training"
 echo "    MODEL_TYPE        : $MODEL_TYPE"
@@ -35,13 +28,11 @@ echo "==> Environment"
 echo "python : $(which python)"
 python --version || true
 
-# Hugging Face / WandB env
 export HF_DATASETS_CACHE="${HF_DATASETS_CACHE:-$HOME/.cache/huggingface/datasets}"
 export HF_HOME="${HF_HOME:-$HOME/.cache/huggingface}"
 export WANDB_DISABLED=false
 export WANDB_PROJECT="fashioniq_composed_retrieval"
 
-# ----------------------- Experiment Resolution ----------------------
 CONFIG_FILE="configs/fashioniq_iterative.yaml"
 
 if [[ -n "$EXISTING_EXP_DIR" ]]; then
@@ -59,7 +50,6 @@ else
   echo "==> Creating new experiment: $EXP_NAME"
 fi
 
-# ------------------------- Model Resolution -------------------------
 case "$MODEL_TYPE" in
   qwen2vl)
     MODEL_NAME="$QWEN2VL_7B_PATH"
@@ -83,7 +73,6 @@ case "$MODEL_TYPE" in
     ;;
 esac
 
-# ---------------------------- I/O Setup -----------------------------
 export WANDB_NAME="$EXP_NAME"
 export WANDB_DIR="$EXP_DIR"
 echo "==> Experiment     : $EXP_NAME"
@@ -94,7 +83,6 @@ if [[ -z "$EXISTING_EXP_DIR" ]]; then
   rm -rf "$EXP_DIR/wandb/"*
 fi
 
-# --------------------- GPU / Dataloader Settings --------------------
 per_device_batch_size=48
 gradient_accumulation=1
 dataloader_workers=4
@@ -127,10 +115,8 @@ if (( NUM_GPUS > 1 )); then
   fi
 fi
 
-# -------------------------- Build Command ---------------------------
 LOG_FILE="$EXP_DIR/training_output.log"
 
-# Build minimal prompt flag
 MINIMAL_PROMPT_FLAG=""
 if [[ "$USE_MINIMAL_PROMPT" == "true" ]]; then
   MINIMAL_PROMPT_FLAG="--use_minimal_prompt"
@@ -138,7 +124,6 @@ if [[ "$USE_MINIMAL_PROMPT" == "true" ]]; then
 fi
 
 if (( NUM_GPUS > 1 )); then
-  # Multi-GPU (DDP)
   cmd="CUDA_VISIBLE_DEVICES=$cuda_devices torchrun \
     --nproc_per_node=$NUM_GPUS \
     --master_port=29500 \
@@ -192,7 +177,6 @@ if (( NUM_GPUS > 1 )); then
     $MINIMAL_PROMPT_FLAG \
     2>&1 | tee \"$LOG_FILE\""
 else
-  # Single-GPU
   cmd="CUDA_VISIBLE_DEVICES=${cuda_devices} python \
     train_iterative.py \
     --model_name \"$MODEL_NAME\" \
@@ -242,7 +226,6 @@ else
     2>&1 | tee \"$LOG_FILE\""
 fi
 
-# --------------------------- Run Training ---------------------------
 echo "==> Running command:"
 echo "$cmd"
 echo ""

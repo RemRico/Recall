@@ -3,9 +3,7 @@ from src.utils import print_rank
 
 
 class CaptionValidator:
-    """
-    Caption 有效性检查和过滤逻辑
-    """
+    """Validation and filtering utilities for generated captions."""
 
     def __init__(self):
         self.invalid_patterns = [
@@ -19,7 +17,7 @@ class CaptionValidator:
         ]
 
     def is_valid(self, caption_text: str) -> bool:
-        """检查生成的 caption 是否有效"""
+        """Return whether a generated caption satisfies basic validity checks."""
         if not caption_text or not caption_text.strip():
             return False
         if caption_text == " " or len(caption_text) > 300:
@@ -31,7 +29,7 @@ class CaptionValidator:
         return True
 
     def filter_valid_samples(self, augmented_samples):
-        """过滤掉无效 caption"""
+        """Filter invalid generated samples based on `modification_text` quality."""
         if not augmented_samples:
             return []
 
@@ -40,7 +38,7 @@ class CaptionValidator:
             if self.is_valid(sample.get("modification_text", "")):
                 valid_samples.append(sample)
             else:
-                # 调试用，仅打印前几个
+                # Emit only a few examples to keep logs compact.
                 if len(valid_samples) < 5:
                     print_rank(
                         f"Filtered invalid caption: '{sample.get('modification_text', '')}' "

@@ -17,10 +17,7 @@ from typing import List, Dict, Any, Optional
 
 from torch.utils.data import Dataset
 
-# Keep using your existing utilities to minimize behavior drift
-from ...utils import print_rank  # same name as before
-from ...model.processor import process_input_text  # keep same import path as your current project
-from ...model.processor import VLM_IMAGE_TOKENS     # used by some collators/pipelines
+from ...utils import print_rank
 
 
 class IterativeRetrievalDataset(Dataset, ABC):
@@ -31,7 +28,6 @@ class IterativeRetrievalDataset(Dataset, ABC):
     stable hooks for higher-level pipelines to call into dedicated modules.
     """
 
-    # --- Public constructor (stable signature) ---
     def __init__(
         self,
         model_args,
@@ -52,7 +48,6 @@ class IterativeRetrievalDataset(Dataset, ABC):
 
         self.dataset_config: Dict[str, Any] = dict(kwargs)  # keep raw config
 
-        # Where downstream modules (HN cache / augmented samples / embeddings cache) will write
         self.experiment_dir = experiment_dir or getattr(training_args, "output_dir", "./experiments/default")
         os.makedirs(self.experiment_dir, exist_ok=True)
 
@@ -61,23 +56,16 @@ class IterativeRetrievalDataset(Dataset, ABC):
         self.image_splits: Dict[str, str] = {}
         self.image_base_dir: str = self.dataset_config.get("image_base_dir", "")
 
-        # In-memory augmentation stash (may be filled by caption generator step)
         self.augmented_samples: List[Dict[str, Any]] = []
 
-        # Reference-id bookkeeping so grouped samplers and losses can map
-        # paths to stable integer buckets.
         self._reference_id_lookup: Dict[str, int] = {}
 
-        # Optional: where retrieval candidates will be stored by a future step
         self.retrieval_candidates: List[str] = []
 
-        # Load dataset-specific metadata/annotations
         self._load_data()
 
-        # Handy for HF Trainer integrations that query num_rows
         self.num_rows: int = len(self.annotations) + len(self.augmented_samples)
 
-    # ---------- Abstract hooks to implement in subclasses ----------
     @abstractmethod
     def _load_data(self) -> None:
         """Load self.annotations / self.image_splits / self.image_base_dir."""
@@ -108,12 +96,11 @@ class IterativeRetrievalDataset(Dataset, ABC):
         """
         raise NotImplementedError
 
-    # ---------- Public Dataset interface ----------
     def __len__(self) -> int:
         base_len = len(self.annotations)
         aug_len = len(self.augmented_samples)
         total = base_len + aug_len
-        self.num_rows = total  # keep parity with your previous code
+        self.num_rows = total
         return total
 
     def __getitem__(self, idx: int) -> Dict[str, Any]:
@@ -123,7 +110,6 @@ class IterativeRetrievalDataset(Dataset, ABC):
             aug_idx = idx - len(self.annotations)
             return self._get_augmented_sample(aug_idx)
 
-    # ---------- Sharding for HF Trainer ----------
     def shard(self, num_shards: int, index: int):
         """
         Consistent with your previous implementation: shallow copy with sliced annotations.
@@ -144,7 +130,6 @@ class IterativeRetrievalDataset(Dataset, ABC):
         )
         return sharded
 
-    # ---------- Path & image helpers (shared by subclasses) ----------
     def _get_full_image_path(self, image_path: str) -> str:
         """
         Normalize relative/absolute paths using dataset's base dir.
@@ -179,7 +164,6 @@ class IterativeRetrievalDataset(Dataset, ABC):
             "resolutions": [None],
         }
 
-    # ---------- Reference grouping helpers ----------
     def _get_reference_id(self, reference_image: str) -> int:
         """
         Map a reference image path (relative or absolute) to a stable integer id.

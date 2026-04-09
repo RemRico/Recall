@@ -9,14 +9,15 @@ import torch.distributed as dist
 from src.utils import print_rank
 from .validators import CaptionValidator
 from .batchers import CaptionBatcher
-from src.utils.path_utils import get_full_image_path  # ✅ NEW: 统一路径解析
+from src.utils.path_utils import get_full_image_path
 
 
 class CaptionGenerator:
     """
-    分布式 / 单卡 caption 增强生成器
-    - 逻辑保持与原始大文件一致，仅拆分为模块化实现
-    - ✅ 新增：按 CIRR 的 image_base_dir + image_splits 规范化样本路径
+    Caption augmentation generator for single-GPU and distributed workflows.
+
+    Behavior is preserved from the original implementation while split into
+    smaller helper modules.
     """
 
     def __init__(
@@ -27,20 +28,19 @@ class CaptionGenerator:
         iteration_round,
         prepare_fns,
         generate_fns,
-        # ===== NEW: 为路径规范化提供上下文 =====
         image_base_dir: str = "",
         image_splits: dict | None = None,
     ):
         """
         Args:
-            foundation_model: 底层生成模型（带 .processor 与 .generate）
-            model_args: 含 foundation_model_backbone 等字段
-            experiment_dir: 实验目录（用于缓存 / 同步落盘）
-            iteration_round: 当前迭代轮次（生成写入下一轮编号的文件）
+            foundation_model: Foundation model with `.processor` and `.generate`
+            model_args: Model argument container
+            experiment_dir: Experiment directory for cache/sync artifacts
+            iteration_round: Current iteration index (writes to next-iter file)
             prepare_fns: dict, {"qwen": fn, "llava": fn, "generic": fn}
             generate_fns: dict, {"qwen": fn, "llava": fn, "generic": fn}
-            image_base_dir: 数据集图片根目录（如 /path/to/CIRR）
-            image_splits: 映射 {样本ID或相对键 -> 相对路径}，用于把键转换为路径
+            image_base_dir: Dataset image root directory (e.g., /path/to/CIRR)
+            image_splits: Mapping {sample-id or key -> relative path}
         """
         self.foundation_model = foundation_model
         self.model_args = model_args
@@ -48,22 +48,22 @@ class CaptionGenerator:
         self.iteration_round = iteration_round
         self.augmented_samples = []
 
-        # 依赖 batchers 和 validators
         self.batcher = CaptionBatcher(foundation_model, model_args, prepare_fns, generate_fns)
         self.validator = CaptionValidator()
 
-        # ===== NEW: 路径上下文 =====
+        # Path normalization context.
         self.image_base_dir = image_base_dir or ""
         self.image_splits = image_splits or {}
         self._preview_printed = 0
         self._preview_limit = 5
 
-    # ===== NEW: 统一把 {ref/target/hn} 三类路径规范到绝对路径 =====
     def _resolve_image_path(self, p: str) -> str:
         """
-        - 若 p 是绝对路径：原样返回
-        - 若 p 是 splits 的键：先映射为相对路径，再拼 base_dir
-        - 否则：按相对路径处理并拼 base_dir
+        Resolve image path to absolute path.
+
+        - If `p` is already absolute, return as-is.
+        - If `p` is a split key, map to relative path and join base dir.
+        - Otherwise treat as relative path and join base dir.
         """
         if not isinstance(p, str) or p == "":
             return p
@@ -72,7 +72,6 @@ class CaptionGenerator:
         mapped = self.image_splits.get(p, p)
         return get_full_image_path(mapped, self.image_base_dir)
 
-    # ===== NEW: 规范化从磁盘读取的增广文件（无论是否嵌套）为 List[Dict] =====
     def _coerce_saved_samples(self, saved: dict) -> list:
         if not isinstance(saved, dict):
             return []
@@ -137,10 +136,10 @@ class CaptionGenerator:
         return out
 
     # =========================
-    #         单卡逻辑
+    #     Single-GPU workflow
     # =========================
     def generate_augmented_captions(self, hard_negatives):
-        """单卡增强 caption 生成"""
+        """Generate augmented captions in single-GPU mode."""
         if not self.foundation_model:
             print_rank("No foundation model, skipping caption generation")
             return []
@@ -148,7 +147,7 @@ class CaptionGenerator:
         next_iter = self.iteration_round + 1
         aug_file = os.path.join(self.experiment_dir, f"augmented_samples_iter_{next_iter}.json")
 
-        # 读缓存
+        # Read cache.
         if os.path.exists(aug_file):
             print_rank(f"Loading existing augmented samples from {aug_file}")
             try:
@@ -197,11 +196,11 @@ class CaptionGenerator:
         self._log_preview(augmented_samples)
         self._save_augmented_samples(augmented_samples)
         total_time = time.time() - start_time
-        print_rank(f"✅ Generated {len(augmented_samples)} samples in {total_time:.1f}s")
+        print_rank(f"Generated {len(augmented_samples)} samples in {total_time:.1f}s")
         return augmented_samples
 
     def _generate_caption_batch(self, hard_negatives_batch, minimal_mode: bool = False):
-        """批量生成 caption（与单卡/多卡复用）"""
+        """Generate captions in batch (shared by single/distributed flows)."""
         from PIL import Image
 
         augmented = []
@@ -222,7 +221,7 @@ class CaptionGenerator:
 
         ref_images, tgt_images, texts, meta = [], [], [], []
 
-        # 打包
+        # Build batch inputs.
         for hard_neg in hard_negatives_batch:
             try:
                 norm_item = self._normalize_item_paths(hard_neg)
@@ -236,11 +235,11 @@ class CaptionGenerator:
                 ref_images.append(ref_img)
                 tgt_images.append(tgt_img)
                 texts.append(norm_item["modification_text"])
-                meta.append(norm_item)  # ✅ 后续写回时使用规范化后的绝对路径
+                meta.append(norm_item)  # Keep normalized absolute paths for write-back.
             except Exception as e:
                 print_rank(f"Error preparing sample: {e}")
 
-        # 生成
+        # Run generation.
         generated_texts = []
         if ref_images:
             generated_texts = self.batcher.generate_batch(
@@ -301,12 +300,12 @@ class CaptionGenerator:
             print_rank(f"... (total {len(augmented_samples)} samples)")
 
     # =========================
-    #        分布式逻辑
+    #   Distributed workflow
     # =========================
     def generate_augmented_captions_distributed(self, hard_negatives):
         """
-        多卡分布式 caption 生成（文件式同步与聚合）
-        完整复刻你原始实现的行为，但模块化并复用验证/保存函数。
+        Generate captions in distributed mode using file-based synchronization.
+        Behavior mirrors the original implementation while reusing validators/savers.
         """
         minimal_mode = getattr(self.model_args, "foundation_prompt_mode", "minimal") == "minimal"
         if not self.foundation_model:
@@ -316,7 +315,7 @@ class CaptionGenerator:
         next_iter = self.iteration_round + 1
         final_aug_file = os.path.join(self.experiment_dir, f"augmented_samples_iter_{next_iter}.json")
 
-        # 读缓存：所有 rank 都尝试直接读
+        # Read cache: all ranks try direct loading first.
         if os.path.exists(final_aug_file):
             print_rank(f"Loading existing augmented samples from {final_aug_file}")
             try:
@@ -331,7 +330,7 @@ class CaptionGenerator:
             except Exception as e:
                 print_rank(f"Error loading augmented samples: {e}, regenerating...")
 
-        # 无分布式则退化为单卡
+        # Fallback to single-GPU path when distributed is not initialized.
         if not dist.is_initialized():
             return self.generate_augmented_captions(hard_negatives)
 
@@ -339,7 +338,7 @@ class CaptionGenerator:
         rank = dist.get_rank()
         print_rank(f"Starting distributed caption generation for {len(hard_negatives)} samples using {world_size} GPUs")
 
-        # 任务切分
+        # Partition workload.
         total = len(hard_negatives)
         per_gpu = (total + world_size - 1) // world_size
         start_idx = rank * per_gpu
@@ -347,12 +346,12 @@ class CaptionGenerator:
         local_list = hard_negatives[start_idx:end_idx]
         print_rank(f"GPU {rank}: Assigned {len(local_list)} samples [{start_idx}, {end_idx})")
 
-        # 设备放置
+        # Place model on rank-local device.
         device = f"cuda:{rank}" if torch.cuda.is_available() else "cpu"
         if hasattr(self.foundation_model, "to"):
             self.foundation_model = self.foundation_model.to(device)
 
-        # 本地生成
+        # Local generation.
         local_aug = []
         if local_list:
             batch_size = 4
@@ -362,7 +361,7 @@ class CaptionGenerator:
                 bidx = i // batch_size + 1
                 batch = local_list[i:i+batch_size]
 
-                # 降低输出噪声：rank0 全打，其他每 5 个批次打一次
+                # Reduce log noise: rank 0 logs every batch, other ranks log every 5 batches.
                 if bidx % 5 == 1 or rank == 0:
                     if bidx > 1:
                         elapsed = time.time() - start_time
@@ -371,23 +370,23 @@ class CaptionGenerator:
                         eta = f"ETA {int((avg_tpb*remain)//60):02d}:{int((avg_tpb*remain)%60):02d}"
                     else:
                         eta = "ETA calculating..."
-                    print_rank(f"GPU {rank}: 🔄 Batch {bidx}/{total_batches} ({len(batch)}) - {eta}")
+                    print_rank(f"GPU {rank}: Batch {bidx}/{total_batches} ({len(batch)}) - {eta}")
 
                 try:
                     t0 = time.time()
                     batch_aug = self._generate_caption_batch(batch, minimal_mode=minimal_mode)
                     local_aug.extend(batch_aug)
                     if bidx % 5 == 0 or rank == 0 or bidx == total_batches:
-                        print_rank(f"GPU {rank}: ✅ Batch {bidx}/{total_batches} in {time.time()-t0:.1f}s, +{len(batch_aug)}")
+                        print_rank(f"GPU {rank}: Batch {bidx}/{total_batches} in {time.time()-t0:.1f}s, +{len(batch_aug)}")
                 except Exception as e:
-                    print_rank(f"❌ GPU {rank}: Error in batch {bidx}: {e}")
+                    print_rank(f"GPU {rank}: Error in batch {bidx}: {e}")
                     print_rank(traceback.format_exc())
         else:
             print_rank(f"GPU {rank}: No local samples, skip generation")
 
-        print_rank(f"GPU {rank}: 🎯 Local generation done: {len(local_aug)} samples")
+        print_rank(f"GPU {rank}: Local generation done: {len(local_aug)} samples")
 
-        # ============ 文件式同步：阶段 1（完成标记） ============
+        # ============ File sync: stage 1 (completion flag) ============
         sync_dir = os.path.join(self.experiment_dir, "sync_caption_gen")
         if rank == 0:
             os.makedirs(sync_dir, exist_ok=True)
@@ -406,21 +405,21 @@ class CaptionGenerator:
                 f.write(f"GPU {rank} completed {len(local_aug)} samples at {time.time()}")
             print_rank(f"GPU {rank}: Retried flag ok")
 
-        # 等待所有 rank 完成
+        # Wait for all completion flags.
         print_rank(f"GPU {rank}: Waiting all completion flags")
         _wait_all_flags(sync_dir, world_size, rank, max_wait_s=36000)
 
-        # ============ 文件式同步：阶段 2（各自写结果） ============
+        # ============ File sync: stage 2 (write per-rank results) ============
         tmp_dir = os.path.join(self.experiment_dir, "temp_caption_results")
         if rank == 0:
             os.makedirs(tmp_dir, exist_ok=True)
             print_rank(f"GPU 0: Created tmp dir {tmp_dir}")
         _wait_dir(tmp_dir, rank, max_wait_s=36000)
 
-        # 本地写文件
+        # Write local result file.
         local_file = os.path.join(tmp_dir, f"gpu_{rank}_samples.json")
         try:
-            # 原子写入，避免主进程读到半写文件
+            # Atomic write to avoid partial-read races.
             tmp_local = local_file + ".tmp"
             with open(tmp_local, "w") as f:
                 json.dump(local_aug, f, indent=2)
@@ -431,11 +430,11 @@ class CaptionGenerator:
         except Exception as e:
             print_rank(f"GPU {rank}: Error saving local file: {e}")
 
-        # 等待所有本地文件 ready
+        # Wait until all local files are ready.
         print_rank(f"GPU {rank}: Waiting all gpu files")
         _wait_all_files(tmp_dir, world_size, rank, max_wait_s=36000)
 
-        # ============ 主进程聚合 ============
+        # ============ Rank-0 merge ============
         if rank == 0:
             all_aug = [local_aug]  # include rank0
             for r in range(1, world_size):
@@ -452,24 +451,24 @@ class CaptionGenerator:
             for chunk in all_aug:
                 merged.extend(chunk)
 
-            # 过滤无效
+            # Filter invalid samples.
             print_rank(f"GPU 0: Filtering {len(merged)} samples")
             merged = self.validator.filter_valid_samples(merged)
 
-            # 保存最终文件（原子落盘）
+            # Save final file (atomic replace).
             self._save_augmented_samples(merged)
             if merged:
                 self._log_preview(merged)
-            print_rank(f"✅ GPU 0: Saved {len(merged)} merged samples")
+            print_rank(f"GPU 0: Saved {len(merged)} merged samples")
 
-            # 不在此处清理，等所有 rank 读取完成后再清理，避免部分 rank 仍在等待文件
+            # Cleanup is delayed until all ranks finish reading the final file.
             print_rank(f"GPU 0: Final file written, waiting other ranks to read before cleanup")
 
-        # ============ 全部 rank 等待最终文件 ============
+        # ============ All ranks wait for final file ============
         print_rank(f"GPU {rank}: Waiting final file")
         _wait_file(final_aug_file, rank, max_wait_s=36000)
 
-        # 全部 rank 读最终文件（保持一致，增加重试以避免看到替换瞬间）
+        # All ranks read the same final file (with retry for atomic replace timing).
         final_aug = []
         if os.path.exists(final_aug_file):
             try:
@@ -486,7 +485,7 @@ class CaptionGenerator:
         else:
             print_rank(f"GPU {rank}: Final file not found")
 
-        # 通知已读取完成：在 sync 目录写入 final_read 标记
+        # Mark final-read completion under sync dir.
         try:
             final_read_flag = os.path.join(sync_dir, f"gpu_{rank}_final_read.txt")
             with open(final_read_flag, "w") as f:
@@ -494,7 +493,7 @@ class CaptionGenerator:
         except Exception as e:
             print_rank(f"GPU {rank}: Error writing final_read flag: {e}")
 
-        # 仅 rank0 等待所有读取标记后再清理临时目录
+        # Only rank 0 performs cleanup after all final-read flags are visible.
         if rank == 0:
             print_rank("GPU 0: Waiting all final_read flags before cleanup")
             start = time.time()
@@ -507,10 +506,10 @@ class CaptionGenerator:
                 if all_ok:
                     break
                 if time.time() - start > 36000:
-                    print_rank("GPU 0: ❌ Timeout waiting final_read flags, proceed to cleanup")
+                    print_rank("GPU 0: Timeout waiting final_read flags, proceed to cleanup")
                     break
                 time.sleep(2)
-            # 清理
+            # Cleanup.
             try:
                 shutil.rmtree(tmp_dir, ignore_errors=True)
                 shutil.rmtree(sync_dir, ignore_errors=True)
@@ -520,19 +519,19 @@ class CaptionGenerator:
                 print_rank(f"GPU 0: Cleanup error: {e}")
 
         self.augmented_samples = final_aug
-        print_rank(f"GPU {rank}: 🎯 Distributed caption generation completed: {len(final_aug)}")
+        print_rank(f"GPU {rank}: Distributed caption generation completed: {len(final_aug)}")
         return final_aug
 
     # =========================
-    #        公共方法
+    #      Shared helpers
     # =========================
     def _save_augmented_samples(self, samples):
-        """保存增强样本（写下一轮编号） — 使用原子替换避免读到半写文件"""
-        # 防呆：确保 samples 为 List[Dict]
+        """Save augmented samples for the next iteration using atomic replace."""
+        # Defensive normalization: ensure `samples` is List[Dict].
         if not isinstance(samples, list):
             samples = self._coerce_saved_samples({"samples": samples}) if hasattr(self, "_coerce_saved_samples") else []
         else:
-            # 过滤非 dict 项
+            # Filter non-dict items.
             samples = [s for s in samples if isinstance(s, dict)]
 
         next_iter = self.iteration_round + 1
@@ -567,7 +566,7 @@ class CaptionGenerator:
         def _safe_mean(values):
             return float(sum(values)) / len(values) if values else None
 
-        # 附带基础统计
+        # Attach summary statistics.
         summary = {
             "total_samples": len(samples),
             "generation_timestamp": time.time(),
@@ -592,7 +591,7 @@ class CaptionGenerator:
             },
             "samples": samples
         }
-        # 原子落盘：写 tmp -> fsync -> replace
+        # Atomic write: tmp -> fsync -> replace.
         tmp_path = out_file + ".tmp"
         out_dir = os.path.dirname(out_file)
         os.makedirs(out_dir, exist_ok=True)
@@ -601,14 +600,14 @@ class CaptionGenerator:
             f.flush()
             os.fsync(f.fileno())
         os.replace(tmp_path, out_file)
-        print_rank(f"✅ Saved {len(samples)} samples to {out_file}")
+        print_rank(f"Saved {len(samples)} samples to {out_file}")
 
 
 # --------------------------
-# 辅助函数（分布式轮询）
+# Helper functions (distributed polling)
 # --------------------------
 def _wait_dir(path, rank, max_wait_s=36000):
-    """等待目录出现（文件轮询），避免 barrier 触发 NCCL 看门狗"""
+    """Wait for a directory to appear via polling to avoid NCCL barrier watchdog risk."""
     waited = 0
     while not os.path.exists(path) and waited < max_wait_s:
         time.sleep(1)
@@ -616,12 +615,12 @@ def _wait_dir(path, rank, max_wait_s=36000):
         if waited % 10 == 0:
             print_rank(f"GPU {rank}: Waiting dir {path}... {waited}s")
     if not os.path.exists(path):
-        print_rank(f"GPU {rank}: ❌ Dir wait timeout, try make locally: {path}")
+        print_rank(f"GPU {rank}: Dir wait timeout, try creating locally: {path}")
         os.makedirs(path, exist_ok=True)
 
 
 def _wait_all_flags(sync_dir, world_size, rank, max_wait_s=36000):
-    """等待所有 GPU 的完成标记"""
+    """Wait for completion flags from all GPUs."""
     start = time.time()
     while time.time() - start < max_wait_s:
         all_ok = True
@@ -630,7 +629,7 @@ def _wait_all_flags(sync_dir, world_size, rank, max_wait_s=36000):
                 all_ok = False
                 break
         if all_ok:
-            print_rank(f"GPU {rank}: ✅ All completion flags ready")
+            print_rank(f"GPU {rank}: All completion flags ready")
             return
         time.sleep(5)
         elapsed = int(time.time() - start)
@@ -638,11 +637,11 @@ def _wait_all_flags(sync_dir, world_size, rank, max_wait_s=36000):
             done = [r for r in range(world_size)
                     if os.path.exists(os.path.join(sync_dir, f"gpu_{r}_completed.txt"))]
             print_rank(f"GPU {rank}: Waiting flags... done={done}, elapsed={elapsed}s")
-    print_rank(f"GPU {rank}: ❌ Timeout waiting completion flags")
+    print_rank(f"GPU {rank}: Timeout waiting completion flags")
 
 
 def _wait_all_files(tmp_dir, world_size, rank, max_wait_s=36000):
-    """等待所有 GPU 写出临时结果文件"""
+    """Wait for temporary result files from all GPUs."""
     start = time.time()
     while time.time() - start < max_wait_s:
         all_ok = True
@@ -653,31 +652,31 @@ def _wait_all_files(tmp_dir, world_size, rank, max_wait_s=36000):
                 all_ok = False
                 missing.append(r)
         if all_ok:
-            print_rank(f"GPU {rank}: ✅ All GPU files ready")
+            print_rank(f"GPU {rank}: All GPU files ready")
             return
         time.sleep(2)
         elapsed = int(time.time() - start)
         if elapsed % 60 == 0 and elapsed > 0:
             print_rank(f"GPU {rank}: Waiting files... missing={missing} elapsed={elapsed}s")
-    print_rank(f"GPU {rank}: ❌ Timeout waiting gpu files")
+    print_rank(f"GPU {rank}: Timeout waiting gpu files")
 
 
 def _wait_file(path, rank, max_wait_s=36000):
-    """等待最终合并文件"""
+    """Wait for the final merged file."""
     start = time.time()
     while time.time() - start < max_wait_s:
         if os.path.exists(path):
-            print_rank(f"GPU {rank}: ✅ Final file ready")
+            print_rank(f"GPU {rank}: Final file ready")
             return
         time.sleep(2)
         elapsed = int(time.time() - start)
         if elapsed % 10 == 0 and elapsed > 0:
             print_rank(f"GPU {rank}: Waiting final file... {elapsed}s")
-    print_rank(f"GPU {rank}: ❌ Timeout waiting final file {path}")
+    print_rank(f"GPU {rank}: Timeout waiting final file {path}")
 
 
 def _json_load_retry(path: str, retries: int = 5, delay: float = 0.2):
-    """带重试的 JSON 读取，解决文件原子替换瞬间的可见性/缓存抖动"""
+    """Load JSON with retry to handle transient visibility around atomic replace."""
     last_err = None
     for i in range(retries):
         try:

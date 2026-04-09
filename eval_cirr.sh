@@ -1,21 +1,13 @@
 #!/bin/bash
 
-# CIRR Evaluation Script for Composed Image Retrieval Models
-# This script provides convenient ways to run CIRR evaluation with different model configurations
+# Usage: ./eval_cirr.sh --model_path <path_to_model> [--output_file <path_to_output>]
 
-# use: ./eval_cirr.sh --model_path <path_to_model> --output_file <path_to_output>
-# ./eval_cirr.sh --model_path ./experiments/IterativeCIRR_qwen2vl_20250911_110310_copy --output_file ./results/eval_results_lora_paratuning.json
-# bash ./eval_cirr.sh --model_path ./experiments/IterativeCIRR_qwen2_5vl_7b_20251012_004205_copy_use_only_new_sample_test/training_iter_1/checkpoint-500 --output_file ./results/qwen2_5vl/eval_results_iter1_bs9_maxp384_384_prompt_use_only_new_sample_test.json
-# ./eval_cirr.sh --model_path ./experiments/IterativeCIRR_qwen2_5vl_7b_20251012_004205_copy_gruopsamplerfix_VQAfliter2_match/training_iter_1/checkpoint-500 --output_file ./results/qwen2_5vl/eval_results_iter1_bs9_maxp384_384_prompt_gruopsamplerfix_VQAfliter2_match.json
-# ./eval_cirr.sh --model_path ./experiments/IterativeCIRR_qwen2_5vl_7b_20251012_004205_copy_gruopsamplerfix_copy_triplet_loss_i0_t1/training_iter_1/checkpoint-500 --output_file ./results/qwen2_5vl/eval_results_iter1_bs9_maxp384_384_prompt_gruopsamplerfix_copy_triplet_loss_i0_t1.json
-# Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# Function to print colored output
 print_info() {
     echo -e "${BLUE}[INFO]${NC} $1"
 }
@@ -32,7 +24,6 @@ print_error() {
     echo -e "${RED}[ERROR]${NC} $1"
 }
 
-# Function to show usage
 show_usage() {
     echo "Usage: $0 [OPTIONS]"
     echo ""
@@ -69,7 +60,6 @@ show_usage() {
     echo "  $0 --model_path ./outputs/checkpoint-1000 --output_file ./eval_results.json"
 }
 
-# Default values
 MODEL_PATH=""
 MODEL_NAME=""
 EVAL_CONFIG=""
@@ -81,7 +71,6 @@ CIRR_DATA_DIR=""
 CIRR_IMAGE_DIR=""
 VERBOSE=true
 
-# Parse command line arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
         --model_path)
@@ -140,7 +129,6 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Validate required arguments
 if [[ -z "$MODEL_PATH" ]]; then
     print_error "model_path is required"
     show_usage
@@ -152,7 +140,6 @@ if [[ ! -e "$MODEL_PATH" ]]; then
     exit 1
 fi
 
-# Auto-detect distributed mode if set to "auto"
 if [[ "$DISTRIBUTED" == "auto" ]]; then
     if command -v nvidia-smi >/dev/null 2>&1; then
         GPU_COUNT=$(nvidia-smi --query-gpu=name --format=csv,noheader,nounits | wc -l)
@@ -169,7 +156,6 @@ if [[ "$DISTRIBUTED" == "auto" ]]; then
     fi
 fi
 
-# Print configuration
 print_info "CIRR Evaluation Configuration:"
 echo "  Model Path: $MODEL_PATH"
 echo "  Model Name: ${MODEL_NAME:-auto-detect}"
@@ -183,14 +169,11 @@ echo "  CIRR Image Dir: ${CIRR_IMAGE_DIR:-default}"
 echo "  Verbose: $VERBOSE"
 echo ""
 
-# Build command based on distributed mode
 if [[ "$DISTRIBUTED" == true ]]; then
-    # Use torchrun for distributed evaluation
     GPU_COUNT=$(nvidia-smi --query-gpu=name --format=csv,noheader,nounits | wc -l)
     CMD="torchrun --nproc_per_node=$GPU_COUNT --master_port=29500 eval_cirr.py"
     print_info "Using torchrun with $GPU_COUNT GPUs"
 else
-    # Use regular python for single GPU
     CMD="python eval_cirr.py"
     print_info "Using single GPU/CPU mode"
 fi
@@ -199,13 +182,10 @@ CMD="$CMD --model_path \"$MODEL_PATH\""
 CMD="$CMD --batch_size $BATCH_SIZE"
 CMD="$CMD --device $DEVICE"
 
-# Always provide model_name (required by ModelArguments)
-# Use MODEL_NAME if provided, otherwise use a placeholder that will be inferred
 if [[ -n "$MODEL_NAME" ]]; then
     CMD="$CMD --base_model_name \"$MODEL_NAME\""
     CMD="$CMD --model_name \"$MODEL_NAME\""
 else
-    # Use a default placeholder that will be inferred
     CMD="$CMD --model_name \"auto-infer\""
 fi
 
@@ -233,24 +213,20 @@ if [[ "$VERBOSE" == true ]]; then
     CMD="$CMD --verbose"
 fi
 
-# Set up environment
 export TOKENIZERS_PARALLELISM=false
 
-# Check if we're in the right directory
 if [[ ! -f "eval_cirr.py" ]]; then
     print_error "eval_cirr.py not found in current directory"
     print_info "Please run this script from the project root directory"
     exit 1
 fi
 
-# Run the evaluation
 print_info "Starting CIRR evaluation..."
 print_info "Command: $CMD"
 echo ""
 
 eval $CMD
 
-# Check exit status
 if [[ $? -eq 0 ]]; then
     print_success "CIRR evaluation completed successfully!"
     if [[ -n "$OUTPUT_FILE" ]] && [[ -f "$OUTPUT_FILE" ]]; then

@@ -2,7 +2,7 @@
 import time
 
 class ETAMeter:
-    """简易 ETA 估计器：持续喂入 step，随时读取剩余时间。"""
+    """Simple ETA estimator updated incrementally by processed steps."""
     def __init__(self, total_steps: int):
         self.total = max(1, int(total_steps))
         self.start = time.time()

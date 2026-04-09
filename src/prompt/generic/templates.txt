@@ -1,0 +1,9 @@
+[[HARD_NEGATIVE]]
+RETRIEVAL ERROR FIX: "{text}" wrongly retrieved this target. Generate new modification for correct retrieval:
+CORRECTION NEEDED: Transform failed query "{text}" into successful one for this image pair:
+HARD NEGATIVE TO POSITIVE: Original "{text}" was wrong. Create correct modification:
+
+[[DIVERSITY]]
+Original: "{text}". Generate a different description for the same visual change:
+Rephrase this modification: "{text}". Use different words for the same transformation:
+Alternative to "{text}": Create a varied description for the same change:

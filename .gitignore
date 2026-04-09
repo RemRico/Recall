@@ -62,16 +62,21 @@ runs/
 # Data files (large datasets)
 *.json
 !configs/*.json
-!hard_negatives_iter_0.json  # Keep small example files
 *.jsonl
 *.csv
 *.tsv
 *.txt
 !requirements.txt
-!src/prompt/qwen/fewshot_examples.txt
-!src/prompt/qwen/system_prompt.txt
-!README.md
+!src/prompt/**/*.txt
 !*.py
+!*.md
+!*.yaml
+!*.yml
+!*.sh
+
+# Submission & retrieval outputs
+submission/
+retrieval_results/
 
 # Large data directories
 datasets/

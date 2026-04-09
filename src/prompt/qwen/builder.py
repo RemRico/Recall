@@ -1,17 +1,21 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
-import os, random
-from typing import List, Dict
-from PIL import Image
-import re, json, torch
+import json
+import os
+import random
+import re
 import time
+from typing import Dict, List
+
+import torch
+
 from src.utils import print_rank
 
 _THIS_DIR = os.path.dirname(__file__)
 _SYS_TXT = os.path.join(_THIS_DIR, "system_prompt.txt")
-_FS_TXT  = os.path.join(_THIS_DIR, "fewshot_examples.txt")
+_FS_TXT = os.path.join(_THIS_DIR, "fewshot_examples.txt")
 
-# NEW: cache prompt texts to avoid repeated FS I/O under DDP and transient ENOENT
+# Cache prompt texts to reduce repeated filesystem reads under DDP.
 _TEXT_CACHE: Dict[str, str] = {}
 
 def _read_text_retry(path: str, retries: int = 3, delay: float = 0.2) -> str:
@@ -36,7 +40,7 @@ def _read_text_cached(path: str) -> str:
         print_rank(f"Warning: failed to read {path}: {e}. Using cached/empty content.")
         return _TEXT_CACHE.get(path, "")
 
-# Try to warm up cache once; non-fatal if files temporarily unavailable
+# Warm up cache once; non-fatal if files are temporarily unavailable.
 try:
     _TEXT_CACHE[_SYS_TXT] = _read_text_retry(_SYS_TXT)
     _TEXT_CACHE[_FS_TXT] = _read_text_retry(_FS_TXT)
@@ -245,21 +249,21 @@ def prepare_qwen_inputs(ref_image, target_image, prompt: str, processor, device)
     return {k: v.to(device) for k, v in inputs.items()}
 
 
-# 统一别名，便于 CaptionBatcher 使用
+# Alias retained for `CaptionBatcher` compatibility.
 prepare_inputs = prepare_qwen_inputs
 
 def _output_translator(generated_text: str):
     """Extract text_new from model output"""
     if not generated_text:
         return None
-    # 方法1：纯 JSON
+    # 1) Raw JSON.
     try:
         parsed_json = json.loads(generated_text.strip())
         if isinstance(parsed_json, dict) and "text_new" in parsed_json:
             return parsed_json["text_new"]
     except json.JSONDecodeError:
         pass
-    # 方法2：```json 代码块
+    # 2) JSON code block.
     try:
         m = re.search(r'```json\s*(\{.*?\})\s*```', generated_text, re.DOTALL)
         if m:
@@ -268,19 +272,19 @@ def _output_translator(generated_text: str):
                 return parsed_json["text_new"]
     except json.JSONDecodeError:
         pass
-    # 方法3：大括号片段
+    # 3) Inline JSON object snippet.
     m = re.search(r'\{[^{}]*"text_new"\s*:\s*"([^"]*)"[^{}]*\}', generated_text, re.DOTALL)
     if m:
         return m.group(1)
-    # 方法4：直匹配 "text_new": "..."
+    # 4) Direct `"text_new": "..."` match.
     m = re.search(r'"text_new"\s*:\s*"([^"]*)"', generated_text)
     if m:
         return m.group(1)
-    # 方法5：匹配 text_new="..."
+    # 5) `text_new="..."` match.
     m = re.search(r'text_new\s*[=:]\s*"([^"]*)"', generated_text)
     if m:
         return m.group(1)
-    # 方法6：Text_new 变体
+    # 6) `Text_new` variant.
     m = re.search(r'"Text_new"\s*[:=]\s*"([^"]*)"', generated_text)
     if m:
         return m.group(1)
@@ -288,23 +292,23 @@ def _output_translator(generated_text: str):
 
 @torch.no_grad()
 def generate_with_qwen(inputs, device, foundation_model):
-    """Generate text with Qwen2-VL with memory optimization (批处理里逐条调用)"""
+    """Generate text with Qwen2-VL with memory-aware settings."""
     try:
         torch.cuda.empty_cache()
         output_ids = foundation_model.generate(
             **inputs,
-            max_new_tokens=2048,   # 你的设置
+            max_new_tokens=2048,
             do_sample=True,
             temperature=0.8,
             top_p=0.9,
             pad_token_id=foundation_model.config.eos_token_id
         )
-        # 只解码新增部分
-        input_len   = inputs['input_ids'].shape[1]
-        generated   = output_ids[:, input_len:]
-        proc        = getattr(foundation_model, "processor", None)
+        # Decode only newly generated tokens.
+        input_len = inputs['input_ids'].shape[1]
+        generated = output_ids[:, input_len:]
+        proc = getattr(foundation_model, "processor", None)
 
-        # 优先走 processor.decode，兜底 batch_decode/tokenizer
+        # Prefer processor.decode, with batch_decode/tokenizer fallback.
         try:
             text = proc.decode(generated[0], skip_special_tokens=True).strip()
         except Exception:

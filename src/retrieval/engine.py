@@ -2,7 +2,6 @@
 from __future__ import annotations
 from typing import List, Dict, Any, Optional, Callable
 import os
-import time
 
 import torch
 import torch.nn.functional as F
@@ -12,12 +11,12 @@ from ..utils.path_utils import get_full_image_path
 
 
 try:
-    # 兼容你原项目里的工具函数位置
+    # Compatibility import path.
     from src.model.processor import process_input_text  # type: ignore
 except Exception:
-    process_input_text = None  # 我们会在用到时显式报错
+    process_input_text = None
 
-# VLM2Vec 官方 processor 映射
+# VLM2Vec processor registry.
 from src.model.processor import (
     process_vlm_inputs_fns,  # type: ignore
     GME,
@@ -31,16 +30,17 @@ from .embedding_cache import EmbeddingCache
 
 class RetrievalEngine:
     """
-    只负责“真实检索 + fallback 简化检索”，与缓存、候选库解耦。
-    关键目标：
-    - 100% 保持你原来的行为：fast/production 模式；top-k 结构；gt 索引计算；dtype 对齐；L2 normalize；维度兜底等。
+    Retrieval engine for production retrieval and simplified fallback mode.
+
+    The implementation preserves existing behavior for candidate selection,
+    embedding normalization, top-k ranking, and GT index computation.
     """
 
     def __init__(
         self,
         experiment_dir: str,
         image_base_dir: str,
-        model_args: Any,  # 用于拿 model_backbone
+        model_args: Any,  # Used to read `model_backbone`.
         retrieval_candidates: List[str],
         embedding_cache: Optional[EmbeddingCache] = None,
         *,
@@ -59,7 +59,7 @@ class RetrievalEngine:
         self, model: torch.nn.Module, batch: List[Dict[str, Any]], max_samples: Optional[int] = None
     ) -> Dict[str, Any]:
         """
-        与你原先 _run_retrieval_batch 等价：优先真实检索，失败时回退简化检索
+        Run retrieval for a batch and fallback to simplified retrieval on error.
         """
         print_rank(f"Running real retrieval for {len(batch)} queries")
         try:
@@ -76,12 +76,12 @@ class RetrievalEngine:
         max_samples: Optional[int] = None,
     ) -> Dict[str, Any]:
         """
-        与你原先 _run_real_retrieval_with_cached_targets 等价（抽成公开方法）
+        Run retrieval with precomputed target embeddings.
         """
         return self._run_real_retrieval_with_cached_targets(model, batch, target_embeddings, max_samples)
 
     def get_cache_file_path(self, target_database: List[str]) -> str:
-        """供分布式流程生成 .done flag 时使用"""
+        """Expose cache path for distributed done-flag workflow."""
         return self.cache.get_cache_file_path(target_database)
 
     # -------------------------- internal: retrieval --------------------------
@@ -90,10 +90,7 @@ class RetrievalEngine:
         self, model: torch.nn.Module, batch: List[Dict[str, Any]], max_samples: Optional[int] = None
     ) -> Dict[str, Any]:
         """
-        与你原始 _run_real_retrieval 完全一致（除了路径函数换成 utils），包含：
-        - fast/production 候选集裁剪
-        - 使用 EmbeddingCache.get_or_compute（与原 _get_or_compute_target_embeddings 行为一致）
-        - 归一化 + 相似度 + top-k + gt 索引
+        Production retrieval path with cache-backed target embeddings.
         """
         device = next(model.parameters()).device
         model_backbone = getattr(self.model_args, "model_backbone", "qwen2_vl")
@@ -102,8 +99,8 @@ class RetrievalEngine:
             print_rank("Warning: No processor found in model")
             raise RuntimeError("No processor available")
 
-        # 候选集选择（fast / production）
-        import torch.distributed as dist  # 本地导入，避免非分布式环境报错
+        # Candidate selection (fast mode vs. production mode).
+        import torch.distributed as dist
         if max_samples is not None and max_samples <= 100:
             min_candidates = min(1000, len(self.retrieval_candidates))
             candidate_targets = self.retrieval_candidates[:min_candidates]
@@ -119,15 +116,15 @@ class RetrievalEngine:
         if len(candidate_targets) == 0:
             raise RuntimeError("No valid target images found")
 
-        # 目标向量（缓存）
+        # Target embeddings from cache (or compute on miss).
         target_embeddings = self.cache.get_or_compute(
             candidate_targets, model, processor, model_backbone, device, self._prepare_target_inputs
         )
 
-        # ✅ 统一路径：把候选集映射为绝对路径列表，仅用于 GT 匹配
+        # Convert candidate paths to absolute paths for GT matching.
         abs_candidate_paths = [get_full_image_path(p, self.image_base_dir) for p in candidate_targets]
 
-        # 编码查询（参考图 + 文本）
+        # Encode composed queries.
         with torch.no_grad():
             q_inputs = self._prepare_query_inputs(batch, processor, model_backbone, device)
             try:
@@ -137,7 +134,7 @@ class RetrievalEngine:
                 print_rank(f"Error encoding queries: {e}")
                 q_embs = torch.randn(len(batch), target_embeddings.size(1))
 
-        # 相似度
+        # Similarity matrix.
         q_embs = F.normalize(q_embs, p=2, dim=1)
         t_embs = F.normalize(target_embeddings, p=2, dim=1)
         sims = torch.mm(q_embs, t_embs.t())
@@ -145,12 +142,12 @@ class RetrievalEngine:
         k = min(self.topk, len(candidate_targets))
         top_k_sims, top_k_idx = torch.topk(sims, k, dim=1, largest=True)
 
-        # GT 索引（fallback -1）
+        # GT indices (`-1` when GT is not in candidate set).
         target_paths = candidate_targets
         gt_indices = []
-        gt_full_ranks = []  # ✅ 新增：GT 在全库中的绝对名次（1-based）；若不在候选库为 -1
-        gt_similarities = []  # ✅ 新增：GT 相似度（若不在候选库则为 None）
-        # 新增：当找不到 GT 时，打印规范化对比结果
+        gt_full_ranks = []
+        gt_similarities = []
+        # Diagnostics for missing GT after path normalization.
         abs_candidate_paths_norm = None  # type: ignore
         cand_norm_set = None  # type: ignore
         cand_norm_index = None  # type: ignore
@@ -159,13 +156,12 @@ class RetrievalEngine:
             gt_abs = get_full_image_path(gt_path_raw, self.image_base_dir)
             try:
                 gt_idx = abs_candidate_paths.index(gt_abs)
-                # 计算全库绝对名次（1-based）：比 GT 相似度更大的数量 + 1
+                # Absolute rank in full candidate set (1-based).
                 gt_sim = sims[i, gt_idx].item()
                 full_rank = int(1 + torch.sum(sims[i] > sims[i, gt_idx]).item())
                 gt_full_ranks.append(full_rank)
                 gt_similarities.append(gt_sim)
             except ValueError:
-                # 调试：仅在失败时构建规范化候选集并对比
                 try:
                     gt_norm = os.path.normpath(os.path.realpath(gt_abs))
                     if abs_candidate_paths_norm is None:
@@ -179,7 +175,7 @@ class RetrievalEngine:
                             f"  gt_raw={gt_path_raw}\n  gt_abs={gt_abs}\n  gt_norm={gt_norm}"
                         )
                     else:
-                        # 打印最小必要信息，避免过多日志
+                        # Minimal diagnostics to avoid noisy logs.
                         sample_cand = abs_candidate_paths[0] if len(abs_candidate_paths) > 0 else ""
                         sample_cand_norm = (
                             abs_candidate_paths_norm[0] if abs_candidate_paths_norm and len(abs_candidate_paths_norm) > 0 else ""
@@ -201,7 +197,6 @@ class RetrievalEngine:
             "gt_indices": gt_indices,
             "similarities": top_k_sims.tolist(),
             "target_paths": target_paths,
-            # ✅ 新增
             "gt_full_ranks": gt_full_ranks,
             "gt_similarities": gt_similarities,
         }
@@ -218,7 +213,7 @@ class RetrievalEngine:
         max_samples: Optional[int] = None,
     ) -> Dict[str, Any]:
         """
-        与你原来的 _run_real_retrieval_with_cached_targets 等价
+        Retrieval path using provided target embeddings.
         """
         processor = getattr(model, "processor", None)
         if processor is None:
@@ -240,7 +235,7 @@ class RetrievalEngine:
             if not dist.is_initialized() or dist.get_rank() == 0:
                 print_rank(f"Production mode: using full candidate set ({len(candidate_targets)} images)")
 
-        # ✅ 同样统一绝对路径，再找索引
+        # Convert candidate paths to absolute paths for GT matching.
         abs_candidate_paths = [get_full_image_path(p, self.image_base_dir) for p in candidate_targets]
 
         with torch.no_grad():
@@ -261,9 +256,9 @@ class RetrievalEngine:
         top_k_sims, top_k_idx = torch.topk(sims, k, dim=1, largest=True)
 
         gt_indices = []
-        gt_full_ranks = []  # ✅ 新增
-        gt_similarities = []  # ✅ 新增
-        # 新增：当找不到 GT 时，打印规范化对比结果
+        gt_full_ranks = []
+        gt_similarities = []
+        # Diagnostics for missing GT after path normalization.
         abs_candidate_paths_norm = None  # type: ignore
         cand_norm_set = None  # type: ignore
         cand_norm_index = None  # type: ignore
@@ -311,7 +306,6 @@ class RetrievalEngine:
             "gt_indices": gt_indices,
             "similarities": top_k_sims.tolist(),
             "target_paths": candidate_targets,
-            # ✅ 新增
             "gt_full_ranks": gt_full_ranks,
             "gt_similarities": gt_similarities,
         }
@@ -322,14 +316,13 @@ class RetrievalEngine:
         self, target_paths: List[str], processor: Any, model_backbone: str, device: torch.device
     ) -> Dict[str, torch.Tensor]:
         """
-        与训练数据集一致：为 target 图像构建“仅图像 + one-word 提示”的输入
+        Build target-image inputs aligned with training prompts.
         """
         if process_input_text is None:
             raise RuntimeError("process_input_text is not available. Please ensure prompts.builder is installed.")
 
         texts: List[str] = []
         for _ in target_paths:
-            # 与 IterativeCIRRDataset/_get_original_sample 中的 pos_text 对齐
             t = process_input_text(
                 instruction="Represent the given image in one word:",
                 model_backbone=model_backbone,
@@ -344,7 +337,7 @@ class RetrievalEngine:
         self, batch: List[Dict[str, Any]], processor: Any, model_backbone: str, device: torch.device
     ) -> Dict[str, torch.Tensor]:
         """
-        与训练数据集一致：为查询（参考图 + 修改文本）构建输入
+        Build query inputs aligned with training prompts.
         """
         if process_input_text is None:
             raise RuntimeError("process_input_text is not available. Please ensure prompts.builder is installed.")
@@ -352,7 +345,6 @@ class RetrievalEngine:
         image_paths = [q["reference_image"] for q in batch]
         texts: List[str] = []
         for q in batch:
-            # 与 IterativeCIRRDataset/_get_original_sample 和 _get_augmented_sample 的 query_text 对齐
             mod_text = q.get("modification_text", "")
             txt = process_input_text(
                 instruction=f"Modify this image with <{mod_text}>\nRepresent the modified image in one word:",
@@ -374,7 +366,7 @@ class RetrievalEngine:
         input_type: str = "general",
     ) -> Dict[str, torch.Tensor]:
         """
-        与你原来 _prepare_vlm_inputs 一致：加载图片 -> 调用 VLM2Vec 官方 processor 映射
+        Load images and build VLM2Vec processor inputs.
         """
         from PIL import Image
 
@@ -415,7 +407,7 @@ class RetrievalEngine:
     @staticmethod
     def _process_embeddings(embeddings: torch.Tensor, expected_bs: int, tag: str) -> torch.Tensor:
         """
-        复制你的 _process_embeddings 兜底逻辑
+        Normalize embedding tensor shape with safe fallbacks.
         """
         if embeddings is None:
             print_rank(f"Warning: {tag} returned None, using dummy embeddings")
@@ -440,11 +432,11 @@ class RetrievalEngine:
 
         return embeddings
 
-    # -------------------------- fallback simplified --------------------------
+    # -------------------------- simplified fallback --------------------------
 
     def _run_simplified_retrieval(self, batch: List[Dict[str, Any]]) -> Dict[str, Any]:
         """
-        原样保留你的简化检索（伪造 top-k / similarities，方便快速跑通后续流程）
+        Lightweight fallback retrieval used when production retrieval fails.
         """
         print_rank("Running simplified retrieval (fallback)")
         B = len(batch)
@@ -471,5 +463,5 @@ class RetrievalEngine:
             "top_k_indices": topk_list,
             "gt_indices": gt_list,
             "similarities": sims_list,
-            # 注意：简化检索不含 target_paths，HardNegativeMiner 会据此认为是“模拟检索”
+            # Intentionally does not include `target_paths`.
         }

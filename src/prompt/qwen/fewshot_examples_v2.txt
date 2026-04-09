@@ -1,0 +1,62 @@
+<<<USER
+<Input>
+    "REFERENCE": <image_path>,
+    "TARGET": <image_path>,
+    "Input edit text": "Replace the white sofa with a dark leather one and switch to evening lighting."
+>>>ASSISTANT
+Visual Scan:
+Reference | objects="white fabric sofa, wooden coffee table, floor lamp" | colors="light neutrals" | lighting="bright daylight" | layout="sofa against wall, lamp on left"
+Target | objects="dark brown leather sofa, wooden coffee table, floor lamp" | colors="dark brown, beige" | lighting="warm evening light" | layout="sofa against wall, lamp on left"
+Intent Breakdown (only the input edit text: Replace the white sofa with a dark leather one and switch to evening lighting.):
+I1 | span="white sofa" | intent="replace the white sofa" | type=relative | note="requires checking sofa color change"
+I2 | span="dark leather one" | intent="target sofa is dark leather" | type=relative | note="ensures material/color matches target"
+I3 | span="switch to evening lighting" | intent="change lighting to evening" | type=relative | note="comparison of lighting conditions"
+Evidence from Images:
+I1 | target_obs="sofa appears dark brown in target" | reference_obs="sofa is white in reference" | supports=Yes | reason="color change observed"
+I2 | target_obs="sofa surface is glossy leather" | reference_obs="sofa fabric looks matte cloth" | supports=Yes | reason="material change visible"
+I3 | target_obs="overall scene lit with warm low light" | reference_obs="scene lit with bright daylight" | supports=Yes | reason="lighting temperature and intensity differ"
+Decision per Intent:
+I1 | action=keep | new_span="sofa is no longer white" | justification="color change confirmed"
+I2 | action=keep | new_span="dark brown leather sofa" | justification="material and color verified"
+I3 | action=keep | new_span="warm evening lighting" | justification="lighting shift confirmed"
+Generate Text_new:
+text_new="The scene shows a dark brown leather sofa in warm evening lighting."
+
+<<<USER
+<Input>
+    "REFERENCE": <image_path>,
+    "TARGET": <image_path>,
+    "Input edit text": "Make the sky sunny and clear without any clouds."
+>>>ASSISTANT
+Visual Scan:
+Reference | objects="mountain ridge, trees, cloudy sky" | colors="gray sky, green trees" | lighting="diffuse daylight" | layout="mountains beneath overcast sky"
+Target | objects="mountain ridge, trees, sky with scattered clouds" | colors="blue sky, white clouds, green trees" | lighting="bright sunlight" | layout="mountains beneath open sky"
+Intent Breakdown (only the input edit text: Make the sky sunny and clear without any clouds.):
+I1 | span="sky sunny" | intent="sky should appear sunny" | type=relative | note="brightness change to sunny conditions"
+I2 | span="clear without any clouds" | intent="sky should have zero clouds" | type=absolute | note="requires absence of clouds"
+Evidence from Images:
+I1 | target_obs="sky is bright blue with sunlight on mountains" | reference_obs="sky is gray and overcast" | supports=Yes | reason="clear increase in brightness and warmth"
+I2 | target_obs="few white clouds visible" | reference_obs="" | supports=No | reason="clouds still present in target"
+Decision per Intent:
+I1 | action=keep | new_span="sky looks sunny" | justification="target shows sunny light"
+I2 | action=rewrite | new_span="sky has some clouds" | justification="cannot claim cloud-free sky"
+Generate Text_new:
+text_new="The sky looks sunny with some clouds remaining."
+
+<<<USER
+<Input>
+    "REFERENCE": <image_path>,
+    "TARGET": <image_path>,
+    "Input edit text": "Add a black carpet under the table."
+>>>ASSISTANT
+Visual Scan:
+Reference | objects="wooden table, chairs, bare floor" | colors="light wood, beige" | lighting="bright daylight" | layout="table centered on bare floor"
+Target | objects="wooden table, chairs, patterned rug" | colors="light wood, beige, cream rug" | lighting="bright daylight" | layout="table centered on rug"
+Intent Breakdown (only the input edit text: Add a black carpet under the table.):
+I1 | span="black carpet" | intent="carpet should be black" | type=absolute | note="confirm carpet color in target"
+Evidence from Images:
+I1 | target_obs="carpet appears cream with dark pattern" | reference_obs="" | supports=No | reason="target carpet is not black"
+Decision per Intent:
+I1 | action=rewrite | new_span="light patterned carpet" | justification="target shows cream patterned rug instead of black"
+Generate Text_new:
+text_new="The table sits on a light patterned carpet."

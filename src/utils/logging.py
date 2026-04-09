@@ -18,7 +18,7 @@ def get_rank() -> int:
             return dist.get_rank()
         except Exception:
             return 0
-    # 环境变量兜底（有些启动器会注入）
+    # Fallback to environment variable (some launchers inject it).
     return int(os.environ.get("RANK", "0"))
 
 def is_main_process() -> bool:
@@ -30,14 +30,14 @@ def _ts() -> str:
 
 def print_rank(msg: str) -> None:
     """
-    分布式与单机统一打印：
-    - 自动带时间戳与 rank 前缀
-    - 不抛异常，确保训练不中断
+    Unified printing for distributed/single-process modes:
+    - Automatically prefixes timestamp and rank
+    - Never raises, to avoid interrupting training
     """
     try:
         rank = get_rank()
         sys.stdout.write(f"[{_ts()}][rank {rank}] {msg}\n")
         sys.stdout.flush()
     except Exception:
-        # 最保守的兜底
+        # Most conservative fallback.
         print(msg)

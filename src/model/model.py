@@ -4,7 +4,6 @@ from typing import Dict
 import torch
 import torch.distributed as dist
 from torch import nn, Tensor
-import torch.nn.functional as F
 from transformers import PreTrainedModel, AutoModelForCausalLM, AutoConfig
 from transformers import modeling_utils
 
@@ -37,7 +36,7 @@ from src.model.baseline_backbone.lamra.lamra_qwen25_inference import LamRAQwen25
 from src.model.baseline_backbone.phi3_v.modeling_phi3_v import Phi3VForCausalLM
 from src.model.baseline_backbone.llava_next import LlavaNextForConditionalGeneration
 
-# 兼容部分 Transformers 版本可能缺少该常量
+# Backward compatibility for some Transformers versions.
 if not hasattr(modeling_utils, "ALL_PARALLEL_STYLES") or modeling_utils.ALL_PARALLEL_STYLES is None:
     modeling_utils.ALL_PARALLEL_STYLES = ["tp", "none", "colwise", "rowwise"]
 
@@ -70,7 +69,7 @@ class MMEBModel(nn.Module):
             self.process_rank = dist.get_rank()
             self.world_size = dist.get_world_size()
 
-    # ===== encode_input：保持你最初的逻辑 =====
+    # `encode_input()` preserves existing backbone-specific behavior.
     def encode_input(self, input):
         if getattr(self, "model_backbone", None) == INTERNVIDEO2:
             if "input_ids" in input.keys():
@@ -164,12 +163,11 @@ class MMEBModel(nn.Module):
         """
         Enable gradient checkpointing by delegating to the underlying encoder model.
         This is needed when using --gradient_checkpointing True in training.
-        （行为不变：仅在底模支持时开启；否则保持原本状态）
+        Behavior is unchanged: enable only when supported by the backbone model.
         """
         if gradient_checkpointing_kwargs is None:
             gradient_checkpointing_kwargs = {}
-        # LoRA + DDP + gradient checkpointing 会在默认 use_reentrant=True 时触发
-        # “mark parameter ready twice” 报错，因此默认改成 False，可被显式参数覆盖
+        # Keep default `use_reentrant=False` to avoid DDP checkpointing hook conflicts.
         gradient_checkpointing_kwargs.setdefault("use_reentrant", False)
 
         if hasattr(self.encoder, "gradient_checkpointing_enable"):
@@ -289,7 +287,7 @@ class MMEBModel(nn.Module):
                 trust_remote_code=True,
             )
 
-        # LoRA（如你原始实现）
+        # LoRA
         if model_args.lora:
             print_master(f"Loading lora adapter from {base_model}")
             lora_config = LoraConfig(
@@ -410,7 +408,7 @@ class MMEBModel(nn.Module):
     def save(self, output_dir: str):
         self.encoder.save_pretrained(output_dir)
 
-    # ===== forward：保持你最初的 InfoNCE/CE 计算 =====
+    # `forward()` preserves existing InfoNCE/CE computation behavior.
     def forward(
         self,
         qry: Dict[str, Tensor] = None,

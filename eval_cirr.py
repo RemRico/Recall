@@ -9,7 +9,7 @@ import sys
 import json
 import torch
 import logging
-import re  # NEW
+import re
 from pathlib import Path
 from typing import Dict
 from dataclasses import dataclass, field
@@ -22,22 +22,9 @@ sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
 from src.arguments import ModelArguments, DataArguments
 from src.model.model import MMEBModel
 from src.model.processor import load_processor, get_backbone_name
-from src.model.processor import SUPPORTED_MODELS  # NEW: for validation
+from src.model.processor import SUPPORTED_MODELS
 from src.evaluation.cirr_evaluator import CIRREvaluator
 from src.utils import print_rank, print_master
-
-
-
-# import debugpy
-# try:
-#     # 5678 is the default attach port in the VS Code debug configurations. Unless a host and port are specified, host defaults to 127.0.0.1
-#     debugpy.listen(("localhost", 9501))
-#     print("Waiting for debugger attach")
-#     debugpy.wait_for_client()
-# except Exception as e:
-#     pass
-
-
 
 logging.basicConfig(
     level=logging.INFO, 
@@ -131,10 +118,9 @@ def setup_device(device_arg: str, distributed: bool = False) -> str:
 
 def infer_model_name_from_path(model_path: str, quiet: bool=False) -> str:
     """Try to infer base model name from checkpoint path.
-    增强：支持 qwen2_5vl / qwen2.5-vl 等多种写法，允许静默模式。
+    Supports multiple naming styles such as qwen2_5vl and qwen2.5-vl.
     """
     path_lower = model_path.lower()
-    # 直接匹配 qwen2(.5|_5)? + 可选分隔 + vl
     if re.search(r"qwen2(\.5|_5)?[-_]?vl", path_lower):
         is_qwen25 = bool(re.search(r"qwen2(\.5|_5)", path_lower))
         size = None
@@ -152,7 +138,7 @@ def infer_model_name_from_path(model_path: str, quiet: bool=False) -> str:
         if not quiet:
             print_master(f"Inferred base model name from path pattern: {model_name}")
         return model_name
-    # 原始逻辑回退
+
     config_path = os.path.join(model_path, "config.json")
     if os.path.exists(config_path):
         try:
@@ -167,7 +153,7 @@ def infer_model_name_from_path(model_path: str, quiet: bool=False) -> str:
         except Exception as e:
             if not quiet:
                 print_master(f"Warning: Could not read config.json: {e}")
-    # 最终回退
+
     default_name = "Qwen/Qwen2-VL-2B-Instruct"
     if not quiet:
         print_master("Warning: Could not infer base model name, using default")
@@ -236,17 +222,17 @@ def _align_data_args_with_training(model_path: str, data_args: DataArguments, ve
         if user_specified == DEFAULT_RESIZE_MAX_PIXELS:
             data_args.resize_max_pixels = training_max_pixels
             if verbose:
-                print_master(f"✅ Aligning resize_max_pixels with training value: {training_max_pixels}")
+                print_master(f"Aligning resize_max_pixels with training value: {training_max_pixels}")
         else:
             if verbose:
-                print_master(f"✅ Using user-specified resize_max_pixels: {user_specified}")
+                print_master(f"Using user-specified resize_max_pixels: {user_specified}")
     else:
         if user_specified != DEFAULT_RESIZE_MAX_PIXELS:
             if verbose:
-                print_master(f"✅ Using user-specified resize_max_pixels: {user_specified}")
+                print_master(f"Using user-specified resize_max_pixels: {user_specified}")
         else:
             if verbose:
-                print_master("⚠️ Could not infer training resize_max_pixels; using library default.")
+                print_master("Could not infer training resize_max_pixels; using library default.")
 
 
 def detect_fullft_checkpoint(model_path: str) -> bool:
@@ -284,18 +270,16 @@ def load_model_and_processor(eval_args: CIRREvalArguments, model_args: ModelArgu
     print_master("LOADING MODEL AND PROCESSOR")
     print_master("=" * 60)
 
-    # 先确定潜在的 adapter / config 路径
     local_config_path = os.path.join(eval_args.model_path, "config.json")
     adapter_config_path = os.path.join(eval_args.model_path, "adapter_config.json")
     
     # Detect full fine-tuning checkpoint
     is_fullft = detect_fullft_checkpoint(eval_args.model_path)
     if is_fullft:
-        print_master(f"🔍 Detected FULL FINE-TUNING checkpoint")
+        print_master("Detected FULL FINE-TUNING checkpoint")
     else:
-        print_master(f"🔍 Detected LoRA or standard checkpoint")
+        print_master("Detected LoRA or standard checkpoint")
 
-    # 优先：如果是 LoRA，则直接读取 adapter_config，避免先推测再覆盖的冗余日志
     base_model_name = None
     lora_mode = False
     if os.path.exists(adapter_config_path):
@@ -309,37 +293,24 @@ def load_model_and_processor(eval_args: CIRREvalArguments, model_args: ModelArgu
         except Exception as e:
             print_master(f"Failed reading adapter_config.json (will fallback to inference): {e}")
 
-    # 如果不是 LoRA 或者 LoRA 读取失败，再进行推测或使用用户输入
     if eval_args.base_model_name:
         base_model_name = eval_args.base_model_name
         print_master(f"Using provided base model name: {base_model_name}")
     if base_model_name is None:
-        # 静默推测（减少无意义 Warning），只有最终结果打印
         inferred = infer_model_name_from_path(eval_args.model_path, quiet=True)
         base_model_name = inferred
         print_master(f"Inferred base model name: {base_model_name}")
 
-    # 设置 model_args.model_name
     if model_args.model_name in [None, "auto-infer"]:
         model_args.model_name = base_model_name
         print_master(f"Final model_name set to: {model_args.model_name}")
 
-    # checkpoint 路径（LoRA: 指向 adapter；全量：指向权重目录）
     model_args.checkpoint_path = eval_args.model_path
     model_args.lora = lora_mode or getattr(model_args, 'lora', False)
 
-    # 尝试与训练时配置对齐（保留自定义的 resize_max_pixels 用于实验）
     _align_data_args_with_training(eval_args.model_path, data_args)
+    print_master(f"Set resize_max_pixels={data_args.resize_max_pixels}")
 
-    # 备选分辨率（便于快速切换做对比测试）
-    # data_args.resize_max_pixels = 35840   #  ~sqrt(35840)=189 (早期小分辨率/调试)
-    # data_args.resize_max_pixels = 50176   # 224*224
-    # data_args.resize_max_pixels = 82944   # 288*288
-    # data_args.resize_max_pixels = 147456  # 384*384
-    # data_args.resize_max_pixels = 262144  # 512*512 默认评测分辨率
-    print_master(f"✅ Set resize_max_pixels={data_args.resize_max_pixels}")
-
-    # Backbone 识别：优先 true config，再 fallback
     try:
         from transformers import AutoConfig
         base_cfg = AutoConfig.from_pretrained(model_args.model_name, trust_remote_code=True)
@@ -358,7 +329,6 @@ def load_model_and_processor(eval_args: CIRREvalArguments, model_args: ModelArgu
             model_args.model_backbone = 'qwen2_vl'
         print_master(f"Backbone detection fallback due to {e_det}: {model_args.model_backbone}")
 
-    # 构建 / 加载模型
     model = None
     if model_args.lora:
         print_master("Loading LoRA model (base + adapter)...")
@@ -368,9 +338,9 @@ def load_model_and_processor(eval_args: CIRREvalArguments, model_args: ModelArgu
             model.eval()
             for param in model.parameters():
                 param.requires_grad_(False)
-            print_master("✅ LoRA model loaded successfully (adapters kept unmerged)")
+            print_master("LoRA model loaded successfully (adapters kept unmerged)")
         except Exception as e:
-            print_master(f"❌ LoRA model loading failed: {e}")
+            print_master(f"LoRA model loading failed: {e}")
             raise
     else:
         # Choose model class based on fullft detection
@@ -381,7 +351,7 @@ def load_model_and_processor(eval_args: CIRREvalArguments, model_args: ModelArgu
         try:
             model = ModelClass.load(model_args, is_trainable=False)
             model.eval()
-            print_master(f"✅ {model_type_str} model loaded successfully from local checkpoint")
+            print_master(f"{model_type_str} model loaded successfully from local checkpoint")
         except Exception as e:
             print_master(f"{ModelClass.__name__}.load failed: {e}")
             print_master("Trying build + manual weight load fallback...")
@@ -413,23 +383,23 @@ def load_model_and_processor(eval_args: CIRREvalArguments, model_args: ModelArgu
                         sd = {'encoder.' + k: v for k, v in sd.items()}
                     
                     model.load_state_dict(sd, strict=False)
-                    print_master("✅ Weights loaded into built model")
+                    print_master("Weights loaded into built model")
                 else:
-                    err_msg = f"未在 {eval_args.model_path} 中找到可加载的模型权重文件 (adapter_model.safetensors/adapter_model.bin/model.safetensors/pytorch_model.bin)."
-                    print_master(f"❌ {err_msg}")
+                    err_msg = f"No loadable weight files found in {eval_args.model_path} (adapter_model.safetensors/adapter_model.bin/model.safetensors/pytorch_model.bin)."
+                    print_master(f"{err_msg}")
                     raise ValueError(err_msg)
                 model_args.checkpoint_path = original_checkpoint
             except Exception as e2:
-                print_master(f"❌ All loading methods failed: {e2}")
+                print_master(f"All loading methods failed: {e2}")
                 raise
 
     # Processor
     print_master("Loading processor...")
     try:
         processor = load_processor(model_args, data_args)
-        print_master("✅ Processor loaded successfully")
+        print_master("Processor loaded successfully")
     except Exception as e:
-        print_master(f"❌ Failed to load processor: {e}")
+        print_master(f"Failed to load processor: {e}")
         raise
 
     setattr(model, 'processor', processor)
@@ -468,9 +438,9 @@ def run_evaluation(model, processor, eval_args: CIRREvalArguments, model_args: M
             batch_size=eval_batch_size
             # Note: Not passing eval_config_path to match training behavior
         )
-        print_master("✅ CIRR evaluator created successfully")
+        print_master("CIRR evaluator created successfully")
     except Exception as e:
-        print_master(f"❌ Failed to create CIRR evaluator: {e}")
+        print_master(f"Failed to create CIRR evaluator: {e}")
         raise
     
     try:
@@ -510,14 +480,10 @@ def run_evaluation(model, processor, eval_args: CIRREvalArguments, model_args: M
             
             print_master("=" * 60)
         
-        # Clean up temporary config if created (no longer needed since we don't create temp files)
-        # if eval_config_path and eval_config_path.startswith("temp_eval_config_rank"):
-        #     ... cleanup code removed ...
-        
         return results
         
     except Exception as e:
-        print_master(f"❌ CIRR evaluation failed: {e}")
+        print_master(f"CIRR evaluation failed: {e}")
         import traceback
         print_master(f"Traceback: {traceback.format_exc()}")
         raise
@@ -631,7 +597,7 @@ def main():
     # Save results and print completion message (only on main process)
     if is_main_process:
         save_results(results, eval_args, model_args)
-        print_master("🎉 CIRR evaluation completed successfully!")
+        print_master("CIRR evaluation completed successfully!")
     
     # Clean up distributed (all processes)
     if eval_args.distributed and dist.is_initialized():

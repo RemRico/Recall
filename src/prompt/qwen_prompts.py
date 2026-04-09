@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 """
 Prompt builder for Qwen backbone
-— builds conversation format with rich instruction chains
+- Builds conversation format with rich instruction chains.
 """
 
-from typing import List, Dict
+from typing import Dict, List
 
 
 def build_qwen_conversation(ref_image_path: str, tgt_image_path: str, original_text: str) -> List[Dict]:

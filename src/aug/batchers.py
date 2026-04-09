@@ -4,17 +4,15 @@ from src.prompt.qwen import builder_minimal
 
 
 class CaptionBatcher:
-    """
-    封装不同 backbone 的批处理生成逻辑
-    """
+    """Batch caption generation wrapper across different foundation backbones."""
 
     def __init__(self, foundation_model, model_args, prepare_fns, generate_fns):
         """
         Args:
-            foundation_model: 底层生成模型 (Qwen / LLaVA / Generic)
-            model_args: 模型参数配置
-            prepare_fns: dict, 包含 prepare_xxx_inputs 的函数
-            generate_fns: dict, 包含 generate_with_xxx 的函数
+            foundation_model: Underlying generator model (Qwen / LLaVA / Generic)
+            model_args: Model argument container
+            prepare_fns: Mapping of input-preparation functions
+            generate_fns: Mapping of generation functions
         """
         self.foundation_model = foundation_model
         self.model_args = model_args
@@ -22,7 +20,7 @@ class CaptionBatcher:
         self.generate_fns = generate_fns
 
     def generate_batch(self, ref_images, target_images, original_texts, processor, device):
-        """根据 backbone 类型批量生成 captions"""
+        """Generate captions in batch according to configured backbone type."""
         backbone = getattr(self.model_args, "foundation_model_backbone", "qwen2_vl")
 
         if backbone in ["qwen2_vl", "qwen", "qwen2_5_vl"]:
@@ -39,10 +37,10 @@ class CaptionBatcher:
             )
 
     def _generate_qwen_batch(self, ref_images, target_images, prompts, processor, device):
-        """批量使用 Qwen 生成文本"""
+        """Generate captions with Qwen-family models."""
         results = []
 
-        # Get dataset name from model_args
+        # Optional dataset-aware prompt behavior.
         dataset_name = getattr(self.model_args, "current_dataset_name", None)
         prompt_mode = getattr(self.model_args, "foundation_prompt_mode", "minimal")
 
@@ -78,7 +76,7 @@ class CaptionBatcher:
         return results
 
     def _generate_llava_batch(self, ref_images, target_images, prompts, processor, device):
-        """批量使用 LLaVA 生成文本"""
+        """Generate captions with LLaVA-family models."""
         results = []
         for ref_img, tgt_img, prompt in zip(ref_images, target_images, prompts):
             try:
@@ -91,7 +89,7 @@ class CaptionBatcher:
         return results
 
     def _generate_generic_batch(self, ref_images, target_images, prompts, processor, device):
-        """批量使用通用模型生成文本"""
+        """Generate captions with generic fallback generation functions."""
         results = []
         for ref_img, tgt_img, prompt in zip(ref_images, target_images, prompts):
             try:

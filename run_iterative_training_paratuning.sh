@@ -1,34 +1,22 @@
 #!/usr/bin/env bash
-# Iterative Training Script for Composed Image Retrieval - PRODUCTION VERSION (LoRA r=16, dropout=0.1)
+# Iterative training launcher for composed image retrieval.
 # Usage:
-#   ./run_iterative_training_r16_d01.sh [cirr|fashioniq] [qwen2vl|qwen2vl_2b|qwen2_5vl_7b|llava_next] [num_gpus] [existing_exp_dir]
-#
-# Examples:
-#   ./run_iterative_training_r16_d01.sh cirr qwen2vl 2
-#   ./run_iterative_training_r16_d01.sh cirr qwen2vl 8
-#   ./run_iterative_training_r16_d01.sh cirr qwen2vl 2 ./experiments/IterativeCIRR_qwen2vl_20250805_000011
-#   bash ./run_iterative_training_paratuning.sh cirr qwen2_5vl_7b 8 ./experiments/IterativeCIRR_qwen2_5vl_7b_20251012_004205_copy_gruopsamplerfix_copy_triplet_loss_i0_t1
-#   bash ./run_iterative_training_paratuning.sh cirr qwen2_5vl_7b 8 ./experiments/IterativeCIRR_qwen2_5vl_7b_20251012_004205_continue_test_new_eval
-# - This script uses LoRA with r=16, dropout=0.1 and (default) alpha=32 (override via $LORA_ALPHA).
-# - Iterative training with grouped-by-reference-image sampler remains enabled.
+#   ./run_iterative_training_paratuning.sh [cirr|fashioniq] [qwen2vl|qwen2vl_2b|qwen2_5vl_7b|llava_next] [num_gpus] [existing_exp_dir]
 
 set -euo pipefail
 
-# -------------------------- Configuration --------------------------
-DATASET=${1:-"cirr"}             # cirr | fashioniq
-MODEL_TYPE=${2:-"qwen2vl"}       # qwen2vl | qwen2vl_2b | llava_next
-NUM_GPUS=${3:-2}                 # default 2 GPUs
-EXISTING_EXP_DIR=${4:-""}        # optional: resume from existing experiment dir
-EXTRA_TRAIN_ARGS=${EXTRA_TRAIN_ARGS:-""}  # optional: pass-through flags to train_iterative.py
+DATASET=${1:-"cirr"}
+MODEL_TYPE=${2:-"qwen2vl"}
+NUM_GPUS=${3:-2}
+EXISTING_EXP_DIR=${4:-""}
+EXTRA_TRAIN_ARGS=${EXTRA_TRAIN_ARGS:-""}
 
-# LoRA settings for this script
 LORA_R=64
 LORA_DROPOUT=0.1
 
-# Local model paths
 QWEN2VL_2B_PATH="/home/guohaiyun/yangtianyu/CPRCIR/checkpoints/hf_models/Qwen2-VL-2B-Instruct"
 QWEN2VL_7B_PATH="/home/guohaiyun/yangtianyu/CPRCIR/checkpoints/hf_models/Qwen2-VL-7B-Instruct"
-QWEN2_5VL_7B_PATH="/home/guohaiyun/yangtianyu/CPRCIR/checkpoints/hf_models/Qwen2.5-VL-7B-Instruct"  # NEW
+QWEN2_5VL_7B_PATH="/home/guohaiyun/yangtianyu/CPRCIR/checkpoints/hf_models/Qwen2.5-VL-7B-Instruct"
 QWEN2_5VL_32B_PATH="/home/guohaiyun/yangtianyu/CPRCIR/checkpoints/hf_models/Qwen2.5-VL-32B-Instruct"
 
 echo "==> Starting iterative training"
@@ -42,15 +30,11 @@ echo "conda  : $(which conda || true)"
 echo "python : $(which python)"
 python --version || true
 
-# Hugging Face / WandB env
 export HF_DATASETS_CACHE="${HF_DATASETS_CACHE:-$HOME/.cache/huggingface/datasets}"
 export HF_HOME="${HF_HOME:-$HOME/.cache/huggingface}"
 export WANDB_DISABLED=false
 export WANDB_PROJECT="iterative_composed_retrieval_production"
-# export WANDB_API_KEY="your_wandb_api_key"
-# export HUGGING_FACE_HUB_TOKEN="your_hf_token"
 
-# ----------------------- Experiment Resolution ----------------------
 if [[ -n "$EXISTING_EXP_DIR" ]]; then
   if [[ ! -d "$EXISTING_EXP_DIR" ]]; then
     echo "Error: Existing experiment directory '$EXISTING_EXP_DIR' does not exist."
@@ -93,7 +77,6 @@ else
   echo "==> Creating new experiment: $EXP_NAME"
 fi
 
-# ------------------------- Model Resolution -------------------------
 case "$MODEL_TYPE" in
   qwen2vl)
     MODEL_NAME="$QWEN2VL_7B_PATH"
@@ -104,8 +87,8 @@ case "$MODEL_TYPE" in
     FOUNDATION_MODEL="$QWEN2VL_2B_PATH"
     ;;
   qwen2_5vl_7b)
-    MODEL_NAME="$QWEN2_5VL_7B_PATH"    # NEW case
-    FOUNDATION_MODEL="$QWEN2_5VL_7B_PATH"  # keep caption model一致
+    MODEL_NAME="$QWEN2_5VL_7B_PATH"
+    FOUNDATION_MODEL="$QWEN2_5VL_7B_PATH"
     ;;
   llava_next)
     MODEL_NAME="llava-hf/llava-v1.6-mistral-7b-hf"
@@ -117,7 +100,6 @@ case "$MODEL_TYPE" in
     ;;
 esac
 
-# ---------------------------- I/O Setup -----------------------------
 export WANDB_NAME="$EXP_NAME"
 export WANDB_DIR="$EXP_DIR"
 echo "==> Experiment     : $EXP_NAME"
@@ -128,8 +110,6 @@ if [[ -z "$EXISTING_EXP_DIR" ]]; then
   rm -rf "$EXP_DIR/wandb/"*
 fi
 
-# --------------------- GPU / Dataloader Settings --------------------
-# Default per-device batch / workers; overridden by GPU count below
 per_device_batch_size=48
 gradient_accumulation=1
 dataloader_workers=4
@@ -162,11 +142,9 @@ if (( NUM_GPUS > 1 )); then
   fi
 fi
 
-# -------------------------- Build Command ---------------------------
 LOG_FILE="$EXP_DIR/training_output.log"
 
 if (( NUM_GPUS > 1 )); then
-  # Multi-GPU (DDP)
   cmd="CUDA_VISIBLE_DEVICES=$cuda_devices torchrun \
     --nproc_per_node=$NUM_GPUS \
     --master_port=29500 \
@@ -218,7 +196,6 @@ if (( NUM_GPUS > 1 )); then
     $EXTRA_TRAIN_ARGS \
     2>&1 | tee \"$LOG_FILE\""
 else
-  # Single-GPU
   cmd="CUDA_VISIBLE_DEVICES=${cuda_devices} python \
     train_iterative.py \
     --model_name \"$MODEL_NAME\" \
@@ -269,7 +246,6 @@ else
     2>&1 | tee \"$LOG_FILE\""
 fi
 
-# --------------------------- Run Training ---------------------------
 echo "==> Running command:"
 echo "$cmd"
 echo ""

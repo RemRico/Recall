@@ -1,6 +1,6 @@
+import logging
 import os
 import re
-import cv2
 import subprocess
 import math
 
@@ -16,6 +16,9 @@ from torchvision.io import write_video
 from torchvision.utils import save_image
 
 from . import video_transforms
+
+
+logger = logging.getLogger(__name__)
 
 VID_EXTENSIONS = (".mp4", ".avi", ".mov", ".mkv")
 IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png")
@@ -68,7 +71,7 @@ def download_url(input_path):
     img_data = requests.get(input_path).content
     with open(output_path, "wb") as handler:
         handler.write(img_data)
-    print(f"URL {input_path} downloaded to {output_path}")
+    logger.info("URL %s downloaded to %s", input_path, output_path)
     return output_path
 
 
@@ -171,7 +174,7 @@ def save_sample(x, fps=8, save_path=None, normalize=True, value_range=(-1, 1), f
     """
     assert x.ndim == 4
 
-    if not force_video and x.shape[1] == 1:  # T = 1: save as image
+    if not force_video and x.shape[1] == 1:  # T = 1
         save_path += ".png"
         x = x.squeeze(1)
         save_image([x], save_path, normalize=normalize, value_range=value_range)
@@ -183,7 +186,7 @@ def save_sample(x, fps=8, save_path=None, normalize=True, value_range=(-1, 1), f
             x.sub_(low).div_(max(high - low, 1e-5))
         x = x.mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 3, 0).to("cpu", torch.uint8)
         write_video(save_path, x, fps=fps, video_codec="h264")
-    print(f"Saved to {save_path}")
+    logger.info("Saved to %s", save_path)
     return save_path
 
 
@@ -223,7 +226,7 @@ def resize_crop_to_fill(pil_image, image_size):
     return Image.fromarray(arr[i : i + th, j : j + tw])
 
 
-# adopted from LLaVA-Hound-DPO
+# Adopted from LLaVA-Hound-DPO.
 def get_image(image_path):
     image = Image.open(image_path).convert('RGB')
     return image
@@ -264,7 +267,7 @@ def sample_frames(frames, num_segments):
         except:
             break
         sampled_frames.append(single_frame_path)
-    # If total frame numbers is less than num_segments, append the last images to achieve
+    # If total frame count is less than `num_segments`, repeat the last frame.
     while len(sampled_frames) < num_segments:
         sampled_frames.append(frames[last_frame_id])
     return sampled_frames
@@ -294,7 +297,7 @@ def save_frames(video_path, frame_dir, max_frames_saved, file_name_prefix=''):
         os.makedirs(frame_dir, exist_ok=True)
         total_frames = get_total_frames(video_path)
         if total_frames == 0:
-            print("No frames found in video.")
+            logger.warning("No frames found in video: %s", video_path)
             return
         if total_frames <= max_frames_saved:
             frame_indices = list(range(total_frames))

@@ -1,0 +1,25 @@
+[[HARD_NEGATIVE]]
+USER: RETRIEVAL ERROR CORRECTION TASK
+
+Situation: The modification query "{text}" applied to the left image incorrectly retrieved the right image as a match.
+
+Task: Generate a NEW modification description that would make the right image the CORRECT match for the left image. Focus on visual differences that justify this pairing.
+
+A:
+
+USER: I have a retrieval failure case. The query "{text}" with the left image wrongly retrieved the right image. 
+Create a corrected modification text that would make this retrieval correct. Use different vocabulary and approach.
+A:
+
+USER: Transform this retrieval error into success. Original failed query: "{text}". Generate a new query that makes the right image the correct target for the left image.
+A:
+
+[[DIVERSITY]]
+USER: I'm looking at two images. The original description was: "{text}". Generate a different way to describe the same visual transformation, using varied language and focusing on different details.
+A:
+
+USER: Compare these images. Original instruction: "{text}". Create an alternative description for the same change but with different words and approach.
+A:
+
+USER: Given this modification text: "{text}", write a fresh version that describes the same visual change using different vocabulary and perspective.
+A:

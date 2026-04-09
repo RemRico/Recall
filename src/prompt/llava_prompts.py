@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 Prompt builder for LLaVA backbone
-— builds concatenated multi-image input with structured text
+- Builds concatenated multi-image input with structured text.
 """
 
 from typing import Dict
@@ -26,7 +26,7 @@ Be concise, natural, and descriptive.
     ref_img = Image.open(ref_image_path).convert("RGB")
     tgt_img = Image.open(tgt_image_path).convert("RGB")
 
-    # resize to same height
+    # Resize to the same height.
     min_h = min(ref_img.height, tgt_img.height)
     new_ref_w = int(ref_img.width * min_h / ref_img.height)
     new_tgt_w = int(tgt_img.width * min_h / tgt_img.height)

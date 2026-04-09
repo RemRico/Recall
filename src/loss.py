@@ -3,6 +3,8 @@ import torch.distributed as dist
 import torch
 import torch.nn.functional as F
 
+from src import dist_utils
+
 
 class SimpleContrastiveLoss:
     def __init__(self, temperature: float = 0.02):
@@ -53,7 +55,6 @@ class InExampleContrastiveLoss:
         self.ndim = ndim
 
     def __call__(self, x: Tensor, y: Tensor, reduction: str = 'mean'):
-        # print("gather InExampleContrastiveLoss")
         if torch.distributed.is_initialized():
             x = dist_utils.dist_gather(x)
             y = dist_utils.dist_gather(y)

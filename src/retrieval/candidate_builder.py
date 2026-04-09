@@ -1,6 +1,6 @@
 # retrieval/candidate_builder.py
 from __future__ import annotations
-from typing import Dict, List, Any, Optional, Tuple
+from typing import Dict, List, Any
 import os
 
 from src.utils import print_rank
@@ -9,8 +9,7 @@ from src.utils.path_utils import get_full_image_path
 
 class CandidateBuilder:
     """
-    负责从 image_splits 构建完整候选库，并做覆盖率校验。
-    完整复刻你的 _build_retrieval_candidates / _validate_candidate_coverage 行为。
+    Build retrieval candidates from image splits and validate coverage.
     """
 
     def __init__(
@@ -27,7 +26,7 @@ class CandidateBuilder:
 
     def build(self) -> List[str]:
         """
-        构建候选库：仅返回存在的图片路径列表（仍是相对路径，以便下游和缓存签名与原来一致）
+        Build candidate set and keep relative paths for cache/signature compatibility.
         """
         print_rank("Building CIRR retrieval candidate set...")
 
@@ -52,11 +51,11 @@ class CandidateBuilder:
         print_rank(f"  • Missing files: {len(self.image_splits) - valid}")
 
         if len(retrieval_candidates) < 1000:
-            print_rank(f"⚠️  Warning: Only {len(retrieval_candidates)} retrieval candidates found.")
+            print_rank(f"Warning: only {len(retrieval_candidates)} retrieval candidates found.")
             print_rank("    This might be insufficient for high-quality hard negative mining.")
             print_rank("    Expected ~16,000+ candidates for CIRR dataset.")
         else:
-            print_rank(f"✅ Excellent! {len(retrieval_candidates)} candidates available for hard negative mining.")
+            print_rank(f"Excellent: {len(retrieval_candidates)} candidates available for hard negative mining.")
             print_rank(f"    This is {len(retrieval_candidates)/200:.1f}x more than the previous limited approach.")
 
         self._validate_candidate_coverage(retrieval_candidates)
@@ -97,9 +96,9 @@ class CandidateBuilder:
         print_rank(f"  • Missing target images: {missing_targets}")
 
         if missing_refs == 0 and missing_targets == 0:
-            print_rank("✅ Perfect coverage! All training images are in the candidate set.")
+            print_rank("Perfect coverage: all training images are in the candidate set.")
         else:
-            print_rank("⚠️  Coverage issues detected. This may affect hard negative mining quality.")
+            print_rank("Warning: coverage issues detected. This may affect hard negative mining quality.")
 
         denom = len(total_refs | total_targets)
         covered = denom - missing_refs - missing_targets

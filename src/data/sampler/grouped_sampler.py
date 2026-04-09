@@ -1,3 +1,4 @@
+import logging
 import random
 from collections import defaultdict
 from typing import Any, List, Dict, Iterator, Optional, Tuple
@@ -7,14 +8,17 @@ from torch.utils.data import Sampler, Dataset
 import torch.distributed as dist
 
 
+logger = logging.getLogger(__name__)
+
+
 class DistributedGroupedBatchSampler(Sampler[List[int]]):
     """
-    DDP-friendly 分组打包采样器：
-      - 默认按 reference_image 分组；若样本提供 original_mod_text/augmentation_group_key，
-        则按 (reference_image, anchor_text) 进一步拆分，避免同图下大批量堆叠
-      - 全局洗牌 + 打包成 batch（每个 batch 的样本数 <= batch_size）
-      - 按 rank 对 batch 列表进行均匀切片（i % world_size == rank）
-      - 可选：将不足 batch_size 的 batch 进行“就地重复”补齐到定长
+        DDP-friendly grouped batch sampler.
+
+        Samples are grouped by `reference_image` and optionally refined by
+        `(reference_image, anchor_text)` when augmentation anchor text exists.
+        The sampler builds global batches, slices them evenly per rank, and can
+        optionally pad short batches to fixed length.
     """
 
     def __init__(
@@ -29,7 +33,6 @@ class DistributedGroupedBatchSampler(Sampler[List[int]]):
         rank: Optional[int] = None,
         ref_key: str = "reference_image",
         no_ref_bucket: str = "__no_ref__",
-        # 调试参数（可选）
         debug: bool = False,
         debug_max_batches: int = 5,
         debug_preview_groups: int = 3,
@@ -46,7 +49,6 @@ class DistributedGroupedBatchSampler(Sampler[List[int]]):
         self.seed = int(seed)
         self.ref_key = ref_key
         self.no_ref_bucket = no_ref_bucket
-        # 新增：调试参数
         self.debug = bool(debug)
         self.debug_max_batches = int(debug_max_batches)
         self.debug_preview_groups = max(0, int(debug_preview_groups))
@@ -57,7 +59,6 @@ class DistributedGroupedBatchSampler(Sampler[List[int]]):
         self.preview_cache: Optional[Dict[int, Dict[str, Any]]] = {} if self.debug else None
         self.index_to_group_idx: Optional[Dict[int, int]] = None
 
-        # DDP info
         if world_size is None or rank is None:
             if dist.is_available() and dist.is_initialized():
                 world_size = dist.get_world_size()
@@ -66,28 +67,22 @@ class DistributedGroupedBatchSampler(Sampler[List[int]]):
                 world_size, rank = 1, 0
         self.world_size = int(world_size)
         self.rank = int(rank)
-        self.epoch = 0  # will be set via set_epoch()
+        self.epoch = 0
 
-        # 全局索引池：用于“去重式补齐”从全局挑选未在当前批中的样本
         self.all_indices: List[int] = list(range(len(self.dataset)))
 
-        # 新增：按“样本键签名”建立兼容性桶，避免补进不兼容样本导致 KeyError（如缺少 caption）
         self.schema_buckets: Dict[Tuple[str, ...], List[int]] = defaultdict(list)
         self.index_signature: Dict[int, Tuple[str, ...]] = {}
-        # 新增：记录索引是否增广
         self.index_is_augmented: Dict[int, bool] = {}
 
-        # 1) 分组（一次性）
         raw_groups: Dict[object, List[int]] = defaultdict(list)
         for i in range(len(self.dataset)):
             try:
                 ex = self.dataset[i]
-                # 记录样本的键签名
                 sig = self._signature_of_example(ex)
                 if sig is not None:
                     self.index_signature[i] = sig
                     self.schema_buckets[sig].append(i)
-                # 记录是否增广
                 self.index_is_augmented[i] = bool(ex.get("is_augmented", False))
 
                 group_key = self._build_group_key(ex)
@@ -95,8 +90,6 @@ class DistributedGroupedBatchSampler(Sampler[List[int]]):
                 if self.preview_cache is not None:
                     self.preview_cache[i] = self._build_preview_payload(ex)
             except Exception as e:
-                # 静默容错：跳过坏样本
-                # 也可以 log warning
                 continue
 
         self.group_keys: List[object] = []
@@ -117,11 +110,9 @@ class DistributedGroupedBatchSampler(Sampler[List[int]]):
                 for sample_idx in members:
                     self.index_to_group_idx[sample_idx] = gi
 
-        # 2) 预缓存一个“本 epoch 的 my_batches”（在 __iter__ 首次构建）
         self._cached_batches = None
         self._cached_len = None
 
-        # 调试：分组与样本概览（仅 rank0 打印）
         if self.debug and (not dist.is_initialized() or self.rank == 0):
             total_aug = sum(1 for v in self.index_is_augmented.values() if v)
             total = len(self.all_indices)
@@ -137,37 +128,45 @@ class DistributedGroupedBatchSampler(Sampler[List[int]]):
                     only_aug += 1
                 elif has_orig:
                     only_orig += 1
-            print(
-                f"[Sampler][rank{self.rank}] groups_built: num_groups={self.num_groups}, total={total}, "
-                f"augmented={total_aug}; group_types: both={both_cnt}, only_aug={only_aug}, only_orig={only_orig}"
+            logger.info(
+                "[Sampler][rank%d] groups_built: num_groups=%d, total=%d, augmented=%d; "
+                "group_types: both=%d, only_aug=%d, only_orig=%d",
+                self.rank,
+                self.num_groups,
+                total,
+                total_aug,
+                both_cnt,
+                only_aug,
+                only_orig,
             )
             preview_indices = self._select_preview_group_indices()
             if preview_indices:
-                print(f"[Sampler][rank{self.rank}] group preview (showing up to {self.debug_preview_groups} buckets; <= {self.debug_preview_small_max_size} items when possible)")
+                logger.info(
+                    "[Sampler][rank%d] group preview (up to %d buckets; <= %d items when possible)",
+                    self.rank,
+                    self.debug_preview_groups,
+                    self.debug_preview_small_max_size,
+                )
                 for order, gi in enumerate(preview_indices):
                     key_str = self._format_group_key(self.group_keys[gi])
                     members = self.groups[gi]
-                    print(f"  group#{order} (idx={gi}) {key_str} size={len(members)}")
+                    logger.info("  group#%d (idx=%d) %s size=%d", order, gi, key_str, len(members))
                     for idx in members[: self.debug_preview_items]:
-                        print(f"    {self._preview_sample(idx)}")
+                        logger.info("    %s", self._preview_sample(idx))
                     if len(members) > self.debug_preview_items:
                         remain = len(members) - self.debug_preview_items
-                        print(f"    ... +{remain} more")
+                        logger.info("    ... +%d more", remain)
 
-        # 调试：补齐计数器
         self._debug_pad_same_sig = 0
         self._debug_pad_global = 0
 
     def set_epoch(self, epoch: int):
         self.epoch = int(epoch)
-        # 触发重新构建
         self._cached_batches = None
         self._cached_len = None
-        # 重置调试计数器
         self._debug_pad_same_sig = 0
         self._debug_pad_global = 0
 
-    # 新增：根据样本字典的键集合创建“签名”，用于匹配同结构的数据
     def _signature_of_example(self, ex) -> Optional[Tuple[str, ...]]:
         try:
             if isinstance(ex, dict):
@@ -177,19 +176,16 @@ class DistributedGroupedBatchSampler(Sampler[List[int]]):
             pass
         return None
 
-    # 新增：批内“去重式补齐”，优先从同“键签名”的索引中补足，其次再全局，最后回退允许重复
     def _pad_unique(self, base: List[int], target_size: int, rnd: random.Random) -> List[int]:
         if len(base) >= target_size:
             return base[:target_size]
         if not base:
-            # 极端情况：没有基样本，退化为全局填充
             batch = []
             exclude = set()
             candidates_pool = self.all_indices
         else:
             batch = list(base)
             exclude = set(batch)
-            # 以首个样本的签名作为本批“兼容结构”
             sig = self.index_signature.get(batch[0])
             if sig is not None and sig in self.schema_buckets:
                 candidates_pool = self.schema_buckets[sig]
@@ -197,7 +193,6 @@ class DistributedGroupedBatchSampler(Sampler[List[int]]):
                 candidates_pool = self.all_indices
 
         need = target_size - len(batch)
-        # 先在同签名池中找不重复候选
         candidates = [i for i in candidates_pool if i not in exclude]
         take = min(need, len(candidates))
         if take > 0:
@@ -209,7 +204,6 @@ class DistributedGroupedBatchSampler(Sampler[List[int]]):
             else:
                 self._debug_pad_same_sig += 1
 
-        # 若仍不足，尝试在全局池中找不重复候选
         if need > 0:
             global_cands = [i for i in self.all_indices if i not in exclude]
             take2 = min(need, len(global_cands))
@@ -218,18 +212,13 @@ class DistributedGroupedBatchSampler(Sampler[List[int]]):
                 need -= take2
                 self._debug_pad_global += 1
 
-        # 若仍不足（小数据集或 batch_size 超大），回退允许重复以保证定长
         while len(batch) < target_size:
             pool = candidates_pool if candidates_pool else (batch if batch else self.all_indices)
             batch.append(rnd.choice(pool))
         return batch
 
     def _build_group_key(self, ex) -> object:
-        """
-        构造分组键：
-          - 默认按 reference_image 聚合
-          - 若提供 original_mod_text / augmentation_group_key，则与 reference 组成二级分组
-        """
+        """Build grouping key using reference path and optional anchor text."""
         ref = None
         if isinstance(ex, dict):
             ref = ex.get(self.ref_key)
@@ -405,10 +394,7 @@ class DistributedGroupedBatchSampler(Sampler[List[int]]):
         return f"ref={str(key)}"
 
     def _build_all_batches(self):
-        """
-        基于当前 epoch 构建全局 batch 列表，然后切片到本 rank。
-        """
-        # 洗牌 groups 的顺序（全局一致），同时优先保持相同 reference 的小组相邻
+        """Build global batches for the epoch and slice batches for this rank."""
         if self.shuffle:
             rnd = random.Random(self.seed + self.epoch)
             ref_order = list(self.reference_to_group_indices.keys())
@@ -424,7 +410,6 @@ class DistributedGroupedBatchSampler(Sampler[List[int]]):
                 rnd.shuffle(per_ref_groups)
             group_indices.extend(per_ref_groups)
 
-        # 打包：<= batch_size，先累积再切片，避免在 epoch 内重复采样
         batches: List[List[int]] = []
         pending: List[int] = []
         for gi in group_indices:
@@ -434,7 +419,6 @@ class DistributedGroupedBatchSampler(Sampler[List[int]]):
                 batches.append(batch)
                 pending = pending[self.batch_size :]
 
-        # 末尾残留（不足 batch_size）
         if pending:
             if self.drop_last:
                 pending = []
@@ -447,13 +431,9 @@ class DistributedGroupedBatchSampler(Sampler[List[int]]):
                 batches.append(list(pending))
                 pending = []
 
-        # === 关键：按 rank 均匀切片 ===
         my_batches = [b for i, b in enumerate(batches) if (i % self.world_size) == self.rank]
 
-        # 如果不 pad_to_full 又不 drop_last，可能导致不同 rank 的 batch 长度仍不一致
-        # 为 DDP 稳定，强烈建议 pad_to_full=True
         if self.pad_to_full:
-            # 双保险：确保每个 batch 都等长
             fixed = []
             rnd = random.Random(self.seed + self.epoch + 4096 + self.rank)
             for b in my_batches:
@@ -461,7 +441,6 @@ class DistributedGroupedBatchSampler(Sampler[List[int]]):
                     c = self._pad_unique(b, self.batch_size, rnd)
                     fixed.append(c)
                 elif len(b) > self.batch_size:
-                    # 理论上不会发生（因为我们控制了<=batch_size），但以防万一截断
                     fixed.append(b[: self.batch_size])
                 else:
                     fixed.append(b)
@@ -470,7 +449,6 @@ class DistributedGroupedBatchSampler(Sampler[List[int]]):
         self._cached_batches = my_batches
         self._cached_len = len(my_batches)
 
-        # 调试：本 rank 批次中增广分布与补齐来源（仅 rank0 打印）
         if self.debug and (not dist.is_initialized() or self.rank == 0):
             try:
                 num_batches = len(my_batches)
@@ -502,11 +480,17 @@ class DistributedGroupedBatchSampler(Sampler[List[int]]):
                     for b in my_batches[self.debug_max_batches:]:
                         if any(self.index_is_augmented.get(x, False) for x in b):
                             batches_with_aug += 1
-                print(
-                    f"[Sampler][rank{self.rank}][epoch{self.epoch}] my_batches={num_batches}, "
-                    f"batches_with_aug={batches_with_aug}, total_aug_items_in_preview={total_aug_items}, "
-                    f"pad_same_sig_calls={self._debug_pad_same_sig}, pad_global_calls={self._debug_pad_global}\n" +
-                    "\n".join(preview_lines)
+                logger.info(
+                    "[Sampler][rank%d][epoch%d] my_batches=%d, batches_with_aug=%d, "
+                    "total_aug_items_in_preview=%d, pad_same_sig_calls=%d, pad_global_calls=%d\n%s",
+                    self.rank,
+                    self.epoch,
+                    num_batches,
+                    batches_with_aug,
+                    total_aug_items,
+                    self._debug_pad_same_sig,
+                    self._debug_pad_global,
+                    "\n".join(preview_lines),
                 )
             except Exception:
                 pass
@@ -519,6 +503,5 @@ class DistributedGroupedBatchSampler(Sampler[List[int]]):
 
     def __len__(self) -> int:
         if self._cached_len is None:
-            # 需要构建一次以获得精确长度
             self._build_all_batches()
         return self._cached_len

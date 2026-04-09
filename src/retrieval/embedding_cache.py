@@ -1,6 +1,6 @@
 # retrieval/embedding_cache.py
 from __future__ import annotations
-from typing import Callable, Dict, List, Any, Optional, Tuple
+from typing import Callable, Dict, List, Any
 import os
 import time
 import hashlib
@@ -12,9 +12,10 @@ from src.utils import print_rank
 
 class EmbeddingCache:
     """
-    负责 target embedding 的缓存与计算。
-    - 与你的原实现等价：get_or_compute -> 先读 cache，验证内容匹配再返回；不匹配则重算并落盘。
-    - 计算时通过回调 `prepare_target_inputs_fn` 构造模型输入，避免与 Engine 循环依赖。
+    Cache and compute target embeddings.
+
+    `get_or_compute` validates cached content before reuse and falls back to
+    recomputation when cache validation fails.
     """
 
     def __init__(self, experiment_dir: str):
@@ -34,10 +35,10 @@ class EmbeddingCache:
         prepare_target_inputs_fn: Callable[[List[str], Any, str, torch.device], Dict[str, torch.Tensor]],
     ) -> torch.Tensor:
         """
-        读取或计算 target embeddings（带缓存和dtype/设备一致性）
+        Read or compute target embeddings with dtype/device alignment.
         """
         cache_file = self._get_cache_file_path(target_database)
-        # 1) 尝试加载缓存
+        # 1) Try cache.
         if os.path.exists(cache_file):
             try:
                 print_rank(f"Loading cached target embeddings from {cache_file}")
@@ -51,20 +52,20 @@ class EmbeddingCache:
                     embs = cached["embeddings"]
                     model_dtype = next(model.parameters()).dtype
                     embs = embs.to(dtype=model_dtype, device=device)
-                    print_rank(f"✅ Cache hit! Loaded {len(target_database)} target embeddings (dtype: {embs.dtype})")
+                    print_rank(f"Cache hit: loaded {len(target_database)} target embeddings (dtype: {embs.dtype})")
                     return embs
                 else:
                     print_rank("Cache validation failed, will recompute embeddings")
             except Exception as e:
                 print_rank(f"Error loading cache: {e}, will recompute embeddings")
 
-        # 2) 计算
+        # 2) Compute embeddings.
         print_rank(f"Computing target embeddings for {len(target_database)} images...")
         embs = self._compute_batch(
             target_database, model, processor, model_backbone, device, prepare_target_inputs_fn
         )
 
-        # 3) 落盘缓存
+        # 3) Persist cache.
         try:
             cache_data = {
                 "target_paths": target_database,
@@ -73,14 +74,14 @@ class EmbeddingCache:
                 "model_backbone": model_backbone,
             }
             torch.save(cache_data, cache_file)
-            print_rank(f"💾 Cached target embeddings to {cache_file}")
+            print_rank(f"Cached target embeddings to {cache_file}")
         except Exception as e:
             print_rank(f"Warning: Failed to cache embeddings: {e}")
 
         return embs
 
     def get_cache_file_path(self, target_database: List[str]) -> str:
-        """对外暴露：供分布式流程提前拿到路径/打 done flag 用"""
+        """Expose cache path for distributed done-flag workflow."""
         return self._get_cache_file_path(target_database)
 
     # ---------------------------- internal ----------------------------
@@ -100,10 +101,8 @@ class EmbeddingCache:
         prepare_target_inputs_fn: Callable[[List[str], Any, str, torch.device], Dict[str, torch.Tensor]],
     ) -> torch.Tensor:
         """
-        批量计算 target embeddings（与原实现一致：小批次、进度打印、异常兜底）
+        Compute target embeddings in mini-batches with robust error fallback.
         """
-        import torch.nn.functional as F
-
         batch_size = 8
         total = len(target_database)
         total_batches = (total + batch_size - 1) // batch_size
@@ -115,7 +114,7 @@ class EmbeddingCache:
                 bidx = i // batch_size + 1
                 part = target_database[i : i + batch_size]
 
-                # ETA
+                # ETA estimate.
                 if bidx > 1:
                     elapsed = time.time() - start
                     avg = elapsed / (bidx - 1)
@@ -142,19 +141,19 @@ class EmbeddingCache:
                     chunks.append(dummy)
 
         dur = time.time() - start
-        print_rank(f"✅ Target embeddings computation completed in {int(dur//60):02d}:{int(dur%60):02d}")
+        print_rank(f"Target embeddings computation completed in {int(dur//60):02d}:{int(dur%60):02d}")
         if dur > 0:
             print_rank(f"   Average speed: {total/dur:.1f} images/second")
         final = torch.cat(chunks, dim=0)
         print_rank(f"   Final embeddings shape: {final.shape}")
-        # 不做 normalize；在相似度处统一做 L2 normalize
+        # Keep unnormalized embeddings; retrieval normalizes before similarity.
         model_dtype = next(model.parameters()).dtype
         return final.to(dtype=model_dtype, device=device)
 
     @staticmethod
     def _process_embeddings(embeddings: torch.Tensor, expected_bs: int, tag: str) -> torch.Tensor:
         """
-        等价于你原始的 _process_embeddings：维度修正 + 兜底
+        Align embedding tensor dimensions with safe fallback behavior.
         """
         if embeddings is None:
             print_rank(f"Warning: {tag} returned None, using dummy embeddings")

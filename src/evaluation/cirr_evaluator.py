@@ -252,9 +252,8 @@ class CIRREvaluator:
         except Exception as e:
             print_rank(f"Error loading image {image_name}: {e}")
             return Image.new('RGB', (224, 224), color=(128, 128, 128))
-        
-        # If not found, return a dummy image
-        #print_rank(f"Warning: Image {image_name} not found, using dummy image")
+
+        # If not found, return a dummy image.
         return Image.new('RGB', (224, 224), color=(128, 128, 128))
     
     def _encode_batch(self, batch_data: Dict[str, Any]) -> torch.Tensor:
@@ -411,7 +410,7 @@ class CIRREvaluator:
             query_embeddings = F.normalize(query_embeddings, p=2, dim=1)
             
             # Step 3: Compute similarities (all ranks have full embeddings now)
-            # 这里所有进程都计算了一遍相似度，但是目前来看计算相似度的开销相对较小，所以暂时不优化
+            # All ranks compute similarity after gathering full embeddings.
             print_master(f"Rank {rank}: Computing similarities...")
             print_master(f"Rank {rank}: Query embeddings shape: {query_embeddings.shape}, Candidate embeddings shape: {candidate_embeddings.shape}")
             similarities = torch.mm(query_embeddings, candidate_embeddings.t())
@@ -602,7 +601,7 @@ class CIRREvaluator:
             batch_names = image_names[i:i+self.batch_size]
             batch_images = [self._load_image(name) for name in batch_names]
             
-            # 使用与 CIRR 训练集一致的目标编码指令
+            # Use the same target-encoding instruction as in CIRR training.
             from ..model.processor import process_input_text
             instruction = "Represent the given image in one word:"
             texts = [
@@ -649,7 +648,7 @@ class CIRREvaluator:
         for i in tqdm(range(0, len(queries), self.batch_size), desc=desc, disable=disable_tqdm):
             batch_queries = queries[i:i+self.batch_size]
             
-            # 与 CIRR 训练集一致：将 caption 嵌入到 instruction 中，text 传空串
+            # Keep prompt formatting aligned with CIRR training.
             batch_images_raw = [self._load_image(q['reference']) for q in batch_queries]
             batch_images = [[img] for img in batch_images_raw]
             
@@ -683,7 +682,7 @@ class CIRREvaluator:
     def _compute_recall_metrics(self, similarities: torch.Tensor) -> Dict[str, float]:
         """
         Compute Recall@K metrics for CIRR evaluation
-        包含两种评估模式：全集Recall@K和Group Recall@K
+        Includes both global recall and group recall.
         
         similarities: [num_queries, num_candidates] - similarity scores between queries and candidates
         """
@@ -694,7 +693,7 @@ class CIRREvaluator:
         image_to_idx = {img: idx for idx, img in enumerate(self.candidate_images)}
         
         # Exclude reference images from ranking
-        # 对每个query，将其reference image的分数设为负无穷，确保不会出现在top-k中
+        # Exclude each query reference image from ranking.
         for query_idx, query in enumerate(self.test_data):
             reference_image = query['reference']  # Use correct CIRR key name
             if reference_image in image_to_idx:
@@ -719,13 +718,13 @@ class CIRREvaluator:
         global_recall_k = eval_config.get('global_recall_k', [1, 5, 10, 50])
         group_recall_k = eval_config.get('group_recall_k', [1, 2, 3])
         
-        # 1. Compute Global Recall@K (standard evaluation)
+        # 1) Global Recall@K.
         print_master("Computing Global Recall@K...")
         for k in global_recall_k:
             recall_scores = self._recall_at_k(similarities, positive_pairs, k)
             metrics[f'recall@{k}'] = (recall_scores > 0).float().mean().item() * 100
         
-        # 2. Compute Group Recall@K (within img_set groups)
+        # 2) Group Recall@K (within `img_set`).
         print_master("Computing Group Recall@K...")
         group_metrics = self._compute_group_recall(similarities, image_to_idx, group_recall_k)
         metrics.update(group_metrics)
@@ -762,24 +761,24 @@ class CIRREvaluator:
         return result_metrics
     
     def _recall_at_k(self, scores: torch.Tensor, positive_pairs: torch.Tensor, k: int) -> torch.Tensor:
-        """计算Recall@K"""
+        """Compute Recall@K for score matrix and positive-pair mask."""
         batch_size = 32
         device = scores.device
         
-        # 分批处理避免内存不足
+        # Process in chunks to control memory usage.
         results = []
         for start in range(0, len(scores), batch_size):
             end = start + batch_size
             batch_scores = scores[start:end]
             batch_positive = positive_pairs[start:end]
             
-            # 获取Top-K索引
+            # Top-k indices.
             topk_indices = torch.topk(batch_scores, k, dim=1)[1]
             
-            # 获取每个查询的正确目标索引
+            # Positive target index per query.
             target_indices = torch.argmax(batch_positive.long(), dim=1)
             
-            # 检查每个查询的正确目标是否在Top-K结果中
+            # Whether the positive target appears in top-k.
             correct = torch.zeros(len(target_indices), dtype=torch.float, device=device)
             for i, (target_idx, topk) in enumerate(zip(target_indices, topk_indices)):
                 correct[i] = 1.0 if target_idx in topk else 0.0
@@ -789,29 +788,29 @@ class CIRREvaluator:
         return torch.cat(results)
     
     def _compute_group_recall(self, similarities: torch.Tensor, image_to_idx: Dict[str, int], group_recall_k: List[int]) -> Dict[str, float]:
-        """计算Group Recall@K (within img_set groups)"""
+        """Compute Group Recall@K within each query `img_set`."""
         device = similarities.device
         group_scores = []
         group_positive_pairs = []
         
-        # 对每个查询，创建组内评估的子集
+        # Build per-query grouped candidate subsets.
         for query_idx, query in enumerate(self.test_data):
             target_image = query['target_hard']  # Use correct CIRR key name
             img_set = query.get('img_set', {})
             
             if target_image in image_to_idx and img_set:
-                # 获取所属组的候选图像索引 - img_set is a dict with 'members' key
+                # Candidate indices in the current query group.
                 group_members = img_set.get('members', []) if isinstance(img_set, dict) else img_set
                 group_indices = []
                 for member in group_members:
                     if member in image_to_idx:
                         group_indices.append(image_to_idx[member])
                 
-                if group_indices and len(group_indices) > 1:  # 至少要有2个候选才有意义
-                    # 提取该查询与组内所有候选的分数
+                if group_indices and len(group_indices) > 1:
+                    # Query-to-group similarity vector.
                     group_score = similarities[query_idx, group_indices]
-                    
-                    # 创建该组内的正样本对
+
+                    # Positive mask in group.
                     group_positive = torch.zeros(len(group_indices), dtype=torch.bool, device=device)
                     try:
                         target_idx_in_group = group_indices.index(image_to_idx[target_image])
@@ -825,12 +824,11 @@ class CIRREvaluator:
         
         metrics = {}
         
-        # 如果有有效的组评估数据
+        # Compute grouped metrics.
         if group_scores:
             group_scores = torch.stack(group_scores)
             group_positive_pairs = torch.stack(group_positive_pairs)
             
-            # 计算Group Recall@K
             for k in group_recall_k:
                 if k <= min([len(p) for p in group_positive_pairs]):
                     recall_scores = self._recall_at_k(group_scores, group_positive_pairs, k)
