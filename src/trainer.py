@@ -16,10 +16,8 @@ import os
 import torch
 import math
 
-from src.data.collator.train_collator import split_vlm_inputs, get_dense_rep, split_and_process_vlm_inputs
 from src.model.model import MMEBModel
 from src.loss import SimpleContrastiveLoss, DistributedContrastiveLoss
-from src.grad_cache.grad_cache import GradCache
 from torch.utils.data import DataLoader, Dataset, IterableDataset, RandomSampler, SequentialSampler
 from torch.utils.data.distributed import DistributedSampler
 
@@ -754,82 +752,3 @@ class MMEBTrainer(Trainer):
             self._deactivate_neftune(self.model)
 
         return TrainOutput(self.state.global_step, train_loss, metrics)
-
-
-class GradCacheLateProcessTrainer(MMEBTrainer):
-    """
-    Adapted from gradcache repo.
-    """
-    def __init__(self, *args, **kwargs):
-        self.max_length = kwargs.get("max_length", 512)
-        if "max_length" in kwargs:
-            del kwargs["max_length"]
-        self.model_args = kwargs.get("model_args", None)
-        if "model_args" in kwargs:
-            del kwargs["model_args"]
-        super(GradCacheLateProcessTrainer, self).__init__(*args, **kwargs)
-        self.is_ddp = dist.is_initialized()
-        self._dist_loss_scale_factor = dist.get_world_size() if self.is_ddp else 1
-        loss_fn_cls = DistributedContrastiveLoss if self.is_ddp else SimpleContrastiveLoss
-        loss_fn = loss_fn_cls(temperature=self.model.temperature)
-
-        self.gc = GradCache(
-            models=[self.model, self.model],
-            chunk_sizes=[self.args.gc_q_chunk_size, self.args.gc_p_chunk_size],
-            loss_fn=loss_fn,
-            split_input_fn=split_and_process_vlm_inputs,
-            get_rep_fn=get_dense_rep,
-            fp16=self.args.fp16,
-            scaler=self.scaler if self.args.fp16 else None
-        )
-        self._warned_gc_triplet = False
-
-    def training_step(self, model, inputs, *args, **kwargs) -> torch.Tensor:
-        model.train()
-        negatives = None
-        if len(inputs) == 3:
-            queries, targets, negatives = inputs
-        else:
-            queries, targets = inputs
-
-        if negatives is not None and getattr(model, "triplet_loss_weight", 0.0) > 0 and not self._warned_gc_triplet:
-            print_master("Warning: triplet loss is not supported with GradCache; triplet component will be skipped.")
-            self._warned_gc_triplet = True
-
-        # Drop debug-only keys to avoid unexpected-key failures in downstream model calls.
-        if isinstance(queries, dict) and "sample_ids" in queries:
-            queries = dict(queries)             # Shallow copy to avoid in-place mutation.
-            queries.pop("sample_ids", None)
-        # Then move batches to device before model invocation.
-        
-        queries = batch_to_device(queries, model.device)
-        targets = batch_to_device(targets, model.device)
-        queries, targets = {'qry': queries}, {'tgt': targets}
-
-        _distributed = self.args.local_rank > -1
-        if _distributed:
-            self.gc.models = [model, model]
-            loss = self.gc(queries, targets, no_sync_except_last=_distributed)
-        else:
-            outputs = model(queries, targets)
-            loss = outputs["loss"] if isinstance(outputs, dict) else outputs
-        return loss / self._dist_loss_scale_factor
-
-    def _save(self, output_dir: Optional[str] = None, state_dict=None):
-        print_master(f"Saving model to {output_dir}")
-        os.makedirs(output_dir, exist_ok=True)
-
-        if state_dict is None:
-            state_dict = self.model.state_dict()
-        prefix = 'encoder.'
-        assert all(k.startswith(prefix) for k in state_dict.keys()), list(state_dict.keys())
-        state_dict = {k[len(prefix):]: v for k, v in state_dict.items()}
-        self.model.encoder.save_pretrained(
-            output_dir, state_dict=state_dict, safe_serialization=self.args.save_safetensors
-        )
-
-        if self.tokenizer is not None:
-            self.tokenizer.save_pretrained(output_dir)
-
-        torch.save(self.args, os.path.join(output_dir, TRAINING_ARGS_NAME))
-        self.model.encoder.config.to_json_file(os.path.join(output_dir, 'config.json'))

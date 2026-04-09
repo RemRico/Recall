@@ -94,9 +94,6 @@ class TrainingArguments(TrainingArguments):
     logging_dir: str = field(default=None, metadata={"help": "TensorBoard log directory, also enables train.log generation"})
     logging_steps: int = field(default=1, metadata={"help": "logging steps"})
     num_train_epochs: int = field(default=1, metadata={"help": "number of training epochs"})
-    grad_cache: bool = field(default=False, metadata={"help": "Use gradient cache update"})
-    gc_q_chunk_size: int = field(default=2, metadata={"help": "query side subset size"})
-    gc_p_chunk_size: int = field(default=2, metadata={"help": "target side subset size"})
     interleave_stopping_strategy: str = field(default="all_exhausted", metadata={"help": "all_exhausted or first_exhausted"})
     interleave_batch_size: float = field(default=0, metadata={"help": "Specify mini-batch size to interleave data from multi-sources, 0/None means random sampling by examples, 1 means full batch."})
     # Iterative training parameters

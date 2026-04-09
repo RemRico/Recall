@@ -60,7 +60,6 @@ Recall/
 │   ├── evaluation/
 │   │   ├── cirr_evaluator.py      # CIRR evaluator
 │   │   └── fashioniq_evaluator.py # FashionIQ evaluator
-│   ├── grad_cache/                # Gradient cache implementation
 │   ├── mining/
 │   │   └── hard_negative.py       # Hard negative mining
 │   ├── model/
