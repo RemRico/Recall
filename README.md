@@ -7,7 +7,6 @@ Recall is an iterative training framework for **Composed Image Retrieval (CIR)**
 - **Iterative Training**: Progressive hard negative mining across multiple training rounds, with independent optimizer/scheduler per iteration
 - **Multi-Backbone Support**: Qwen2-VL, Qwen2.5-VL, LLaVA-NeXT, and additional baselines (ColPali, GME, LamRA, InternVideo2, Phi-3V)
 - **Foundation Model Augmentation**: Uses a foundation VLM (e.g., Qwen2.5-VL-7B) to generate augmented captions from hard negative pairs
-- **Gradient Cache**: Memory-efficient contrastive learning via gradient caching for large batch training
 - **Distributed Training**: Multi-GPU support via `torchrun` with grouped sampling strategies
 - **Flexible Evaluation**: Unified evaluation pipeline for CIRR and FashionIQ with distributed inference
 
