@@ -1,6 +1,10 @@
-# Recall: Iterative Composed Image Retrieval
+# ReCALL: Recalibrating Capability Degradation for MLLM-based Composed Image Retrieval
 
-Recall is an iterative training framework for **Composed Image Retrieval (CIR)** that combines hard negative mining with foundation model augmentation. Built on top of VLM2Vec, it supports multiple Vision-Language Model (VLM) backbones and achieves strong results on CIRR and FashionIQ benchmarks.
+<p align="center">
+  <img src="assets/method.png" width="90%">
+</p>
+
+ReCALL is an iterative training framework for **Composed Image Retrieval (CIR)** that combines hard negative mining with foundation model augmentation. Built on top of VLM2Vec, it supports multiple Vision-Language Model (VLM) backbones and achieves strong results on CIRR and FashionIQ benchmarks.
 
 ## Features
 
