@@ -1,10 +1,17 @@
 # ReCALL: Recalibrating Capability Degradation for MLLM-based Composed Image Retrieval
 
 <p align="center">
+  <a href="https://arxiv.org/abs/2602.01639"><img src="https://img.shields.io/badge/arXiv-2602.01639-b31b1b.svg" alt="arXiv"></a>
+  <a href="https://arxiv.org/abs/2602.01639"><img src="https://img.shields.io/badge/CVPR-2026-blue.svg" alt="CVPR 2026"></a>
+</p>
+
+<p align="center">
   <img src="assets/method.png" width="90%">
 </p>
 
-ReCALL is an iterative training framework for **Composed Image Retrieval (CIR)** that combines hard negative mining with foundation model augmentation. Built on top of VLM2Vec, it supports multiple Vision-Language Model (VLM) backbones and achieves strong results on CIRR and FashionIQ benchmarks.
+This is the official implementation of **[ReCALL: Recalibrating Capability Degradation for MLLM-based Composed Image Retrieval](https://arxiv.org/abs/2602.01639)** (CVPR 2026).
+
+ReCALL is a model-agnostic framework that addresses **Capability Degradation** -- the deterioration of native fine-grained reasoning when compressing a generative MLLM into a single-embedding discriminative retriever. It follows a **diagnose-generate-refine** pipeline: (1) diagnose cognitive blind spots via self-guided informative instance mining, (2) generate corrective instructions and triplets by prompting the foundation MLLM with VQA-based consistency filtering, and (3) refine the retriever through continual training with a grouped contrastive scheme. ReCALL achieves state-of-the-art performance on CIRR and FashionIQ benchmarks.
 
 ## Features
 
