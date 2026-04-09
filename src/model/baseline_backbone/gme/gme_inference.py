@@ -28,9 +28,6 @@ class GmeQwen2VL(nn.Module):
     ) -> None:
         super().__init__()
         model_name = model_path or model_name
-        # self.base = AutoModelForVision2Seq.from_pretrained(
-        #     model_name, torch_dtype=torch.bfloat16, **kwargs
-        # )
         config = AutoConfig.from_pretrained(model_name, trust_remote_code=True)
         config._attn_implementation = "flash_attention_2"
         config.padding_side = "left"
@@ -62,9 +59,7 @@ class GmeQwen2VL(nn.Module):
         past_key_values: Optional[List[torch.FloatTensor]] = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
         pixel_values: Optional[torch.Tensor] = None,
-        # pixel_values_videos: Optional[torch.FloatTensor] = None,
         image_grid_thw: Optional[torch.LongTensor] = None,
-        # video_grid_thw: Optional[torch.LongTensor] = None,
         pooling_mask: Optional[torch.LongTensor] = None,
         **kwargs
     ) -> torch.Tensor:
@@ -79,17 +74,9 @@ class GmeQwen2VL(nn.Module):
                 image_embeds = self.base.visual(pixel_values, grid_thw=image_grid_thw).to(inputs_embeds.device)
                 image_mask = input_ids == self.base.config.image_token_id
                 inputs_embeds[image_mask] = image_embeds
-            # if pixel_values_videos is not None:
-            #     pixel_values_videos = torch.cat([torch.from_numpy(pv) for pv in pixel_values_videos]).to(input_ids.device)  # shape=[BS*n_patch,C*H*W]
-            #     video_grid_thw = torch.cat([torch.from_numpy(thw) for thw in video_grid_thw]).to(input_ids.device)  # shape=[BS,H,W]
-            #     pixel_values_videos = pixel_values_videos.type(self.base.visual.get_dtype())
-            #     video_embeds = self.base.visual(pixel_values_videos, grid_thw=video_grid_thw).to(inputs_embeds.device)
-            #     video_mask = input_ids == self.base.config.video_token_id
-            #     inputs_embeds[video_mask] = video_embeds
             if attention_mask is not None:
                 attention_mask = attention_mask.to(inputs_embeds.device)
 
-        # print(inputs_embeds.shape)
         outputs = self.base.model(
             input_ids=None,
             position_ids=position_ids,
@@ -113,8 +100,6 @@ class GmeQwen2VL(nn.Module):
         return embeddings.contiguous()
 
     def embed(self, texts: list[str], images: list[Image.Image], is_query=True, instruction=None, **kwargs):
-        # self.base.to(self.device)
-        # Inputs must be batched
         input_texts, input_images = list(), list()
         for t, i in zip(texts, images):
             if not is_query or instruction is None:

@@ -134,7 +134,7 @@ def infer_model_name_from_path(model_path: str, quiet: bool=False) -> str:
             base = f"Qwen2.5-VL-{size or '7B'}-Instruct"
         else:
             base = f"Qwen2-VL-{size or '7B'}-Instruct"
-        model_name = f"/home/guohaiyun/yangtianyu/CPRCIR/checkpoints/hf_models/{base}" if not base.startswith("/") else base
+        model_name = base if base.startswith("/") else f"Qwen/{base}"
         if not quiet:
             print_master(f"Inferred base model name from path pattern: {model_name}")
         return model_name

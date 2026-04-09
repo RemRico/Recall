@@ -203,16 +203,7 @@ def load_model_and_processor(
         except Exception as e:
             logger.warning(f"Failed reading adapter_config.json: {e}")
     
-    base_models_dir = "/home/guohaiyun/yangtianyu/CPRCIR/checkpoints/hf_models"
-    model_short_name = base_model_name.split('/')[-1]
-    full_base_model_path = os.path.join(base_models_dir, model_short_name)
-
-    if os.path.exists(full_base_model_path):
-        logger.info(f"Using local base model: {full_base_model_path}")
-        base_model_path = full_base_model_path
-    else:
-        logger.warning(f"Local base model not found at {full_base_model_path}, using HF name: {base_model_name}")
-        base_model_path = base_model_name
+    base_model_path = base_model_name
     
     model_args = ModelArguments(
         model_name=base_model_path,

@@ -99,15 +99,7 @@ def image_size_to_num_patches(image_size, grid_pinpoints, patch_size: int):
             raise TypeError(f"image_size invalid type {type(image_size)} with value {image_size}")
         image_size = image_size.tolist()
 
-    # !!! Changes made for calculating the num of patches when multiple images exist in the qry ####################
-    # @ruimeng, disabled, it's buggy for int inputs like [640,529]
-    # if not isinstance(image_size[0], (list, tuple)):
-    #     if not isinstance(image_size[0], (torch.Tensor, np.ndarray)):
-    #         raise TypeError(f"image_size invalid type {type(image_size[0])} with value {image_size[0]}")
-    #     for img_s in image_size:
-    #         img_s = img_s.tolist()
-
-    if isinstance(image_size[0], (tuple, list)): # if there are multiple images, use the first image's size
+    if isinstance(image_size[0], (tuple, list)):
         # assuming all images have the same size
         best_resolution = select_best_resolution(image_size[0], grid_pinpoints)
         height, width = best_resolution
@@ -577,12 +569,6 @@ class LlavaNextForConditionalGeneration(LlavaNextPreTrainedModel, GenerationMixi
             # num_special_image_tokens: [bsz]
             # Reserve for padding of num_images
             total_num_special_image_tokens = torch.sum(special_image_token_mask)
-
-            # we have dummy images, so skip this assert
-            # if total_num_special_image_tokens != num_images:
-            #     raise ValueError(
-            #         f"Number of image tokens in input_ids ({total_num_special_image_tokens}) different from num_images ({num_images})."
-            #     )
 
             # Compute the maximum embed dimension
             # max_image_feature_lens is max_feature_lens per batch

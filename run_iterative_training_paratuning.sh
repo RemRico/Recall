@@ -14,10 +14,10 @@ EXTRA_TRAIN_ARGS=${EXTRA_TRAIN_ARGS:-""}
 LORA_R=64
 LORA_DROPOUT=0.1
 
-QWEN2VL_2B_PATH="/home/guohaiyun/yangtianyu/CPRCIR/checkpoints/hf_models/Qwen2-VL-2B-Instruct"
-QWEN2VL_7B_PATH="/home/guohaiyun/yangtianyu/CPRCIR/checkpoints/hf_models/Qwen2-VL-7B-Instruct"
-QWEN2_5VL_7B_PATH="/home/guohaiyun/yangtianyu/CPRCIR/checkpoints/hf_models/Qwen2.5-VL-7B-Instruct"
-QWEN2_5VL_32B_PATH="/home/guohaiyun/yangtianyu/CPRCIR/checkpoints/hf_models/Qwen2.5-VL-32B-Instruct"
+QWEN2VL_2B_PATH="${QWEN2VL_2B_PATH:-Qwen/Qwen2-VL-2B-Instruct}"
+QWEN2VL_7B_PATH="${QWEN2VL_7B_PATH:-Qwen/Qwen2-VL-7B-Instruct}"
+QWEN2_5VL_7B_PATH="${QWEN2_5VL_7B_PATH:-Qwen/Qwen2.5-VL-7B-Instruct}"
+QWEN2_5VL_32B_PATH="${QWEN2_5VL_32B_PATH:-Qwen/Qwen2.5-VL-32B-Instruct}"
 
 echo "==> Starting iterative training"
 echo "    DATASET      : $DATASET"

@@ -13,10 +13,10 @@ USE_MINIMAL_PROMPT=${4:-"true"}
 LORA_R=16
 LORA_DROPOUT=0.1
 
-QWEN2VL_2B_PATH="/home/guohaiyun/yangtianyu/CPRCIR/checkpoints/hf_models/Qwen2-VL-2B-Instruct"
-QWEN2VL_7B_PATH="/home/guohaiyun/yangtianyu/CPRCIR/checkpoints/hf_models/Qwen2-VL-7B-Instruct"
-QWEN2_5VL_7B_PATH="/home/guohaiyun/yangtianyu/CPRCIR/checkpoints/hf_models/Qwen2.5-VL-7B-Instruct"
-QWEN3VL_8B_PATH="/home/guohaiyun/yangtianyu/CPRCIR/checkpoints/hf_models/Qwen3-VL-8B-Instruct"
+QWEN2VL_2B_PATH="${QWEN2VL_2B_PATH:-Qwen/Qwen2-VL-2B-Instruct}"
+QWEN2VL_7B_PATH="${QWEN2VL_7B_PATH:-Qwen/Qwen2-VL-7B-Instruct}"
+QWEN2_5VL_7B_PATH="${QWEN2_5VL_7B_PATH:-Qwen/Qwen2.5-VL-7B-Instruct}"
+QWEN3VL_8B_PATH="${QWEN3VL_8B_PATH:-Qwen/Qwen3-VL-8B-Instruct}"
 
 echo "==> Starting FashionIQ iterative training"
 echo "    MODEL_TYPE        : $MODEL_TYPE"

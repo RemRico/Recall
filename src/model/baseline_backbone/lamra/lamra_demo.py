@@ -16,16 +16,13 @@ lamra = LamRAQwen2VL("code-kunkun/LamRA-Ret")
 e_text = lamra.get_text_embeddings(texts=texts)
 e_image = lamra.get_image_embeddings(images=images)
 print((e_text * e_image).sum(-1))
-## tensor([0.2281, 0.6001], dtype=torch.float16)
 
 # How to set embedding instruction
 e_query = lamra.get_text_embeddings(texts=texts, instruction='Find an image that matches the given text.')
 # If is_query=False, we always use the default instruction.
 e_corpus = lamra.get_image_embeddings(images=images, is_query=False)
 print((e_query * e_corpus).sum(-1))
-## tensor([0.2433, 0.7051], dtype=torch.float16)
 
 # Fused-modal embedding
 e_fused = lamra.get_fused_embeddings(texts=texts, images=images)
 print((e_fused[0] * e_fused[1]).sum())
-## tensor(0.6108, dtype=torch.float16)

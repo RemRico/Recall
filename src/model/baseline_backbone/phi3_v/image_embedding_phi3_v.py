@@ -270,11 +270,6 @@ class Phi3ImageEmbedding(nn.Module):
                         global_image_features_hd_newline[i],  # global thumbnails, (156,4096)==[(h_crop*12) * (w_crop*12+1), 4096]
                     ])
                 )
-        #     else:
-        #         all_image_embeddings.append(None)
-        # img_embedding_shape = [v.shape for v in all_image_embeddings if isinstance(v, torch.Tensor)][0]
-        # all_image_embeddings = [v if isinstance(v, torch.Tensor) else torch.zeros(img_embedding_shape) for v in all_image_embeddings]
-        # all_image_embeddings = [v.to(image_sizes.device) for v in all_image_embeddings]
         # concatenate embeddings of all images (both HD crops and global thumbnails) in the batch
         #  [BS*(num_token_crops+1+num_token_global),4096]=[BS*(600+1+156),4096]=[BS*757,4096]->[BS*757,3072]
         image_features_proj = self.img_projection(torch.cat(all_image_embeddings, dim=0).to(target_device).to(target_dtype))
@@ -303,14 +298,6 @@ class Phi3ImageEmbedding(nn.Module):
             )  # n_img, h_crop*12, w_crop*12, 4096
         )
 
-        # alternative implementation using einops
-        # from einops import rearrange
-        # image_features_nhwc = rearrange(
-        #     image_features,
-        #     'N (H W) c -> N H W c',
-        #     H=H,
-        #     W=H,
-        # )
         # image_features_2x2merge = rearrange(
         #     image_features_nhwc,
         #     'N (h h_pool) (w w_pool) c -> N h w (h_pool w_pool c)',

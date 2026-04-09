@@ -1047,8 +1047,6 @@ class Phi3VModel(Phi3VPreTrainedModel):
                 **config.embd_layer
             }
             self.vision_embed_tokens = Phi3ImageEmbedding(config, wte=self.embed_tokens, **embedding_config)
-            # # set wte the same for vision embedding
-            # self.vision_embed_tokens.wte.weight = self.embed_tokens.weight
 
         self.layers = nn.ModuleList(
             [Phi3DecoderLayer(config, layer_idx) for layer_idx in range(config.num_hidden_layers)]

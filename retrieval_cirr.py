@@ -128,8 +128,13 @@ class CIRRRetriever:
         print_master(f"Loaded {len(self.candidate_images)} candidate images")
 
     def _configure_data_paths(self, cirr_data_dir=None, cirr_image_dir=None):
-        self.data_dir = cirr_data_dir or '/home/guohaiyun/yty_data/CIRR/cirr'
-        self.image_base_dir = cirr_image_dir or '/home/guohaiyun/yty_data/CIRR'
+        if not cirr_data_dir or not cirr_image_dir:
+            raise ValueError(
+                "CIRR data paths must be provided via --cirr_data_dir and --cirr_image_dir. "
+                "See README for dataset download instructions."
+            )
+        self.data_dir = cirr_data_dir
+        self.image_base_dir = cirr_image_dir
         self.captions_file = os.path.join(self.data_dir, 'captions/cap.rc2.val.json')
         self.image_splits_file = os.path.join(self.data_dir, 'image_splits/split.rc2.val.json')
 
@@ -362,7 +367,7 @@ def infer_model_name_from_path(model_path: str, quiet: bool = False) -> str:
         elif '32b' in path_lower:
             size = '32B'
         base = f"Qwen2.5-VL-{size or '7B'}-Instruct" if is_qwen25 else f"Qwen2-VL-{size or '7B'}-Instruct"
-        model_name = f"/home/guohaiyun/yangtianyu/CPRCIR/checkpoints/hf_models/{base}"
+        model_name = f"Qwen/{base}"
         if not quiet:
             print_master(f"Inferred base model from path pattern: {model_name}")
         return model_name

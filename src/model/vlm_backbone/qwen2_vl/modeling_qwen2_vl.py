@@ -1098,14 +1098,6 @@ class Qwen2VLModel(Qwen2VLPreTrainedModel):
     ):
         if self.config._attn_implementation == "flash_attention_2":
             # @ruimeng: disabled the check since very occasionally there are empty data points causing whole attention_mask to be 0
-            # if attention_mask is not None and past_key_values is not None:
-                # is_padding_right = attention_mask[:, -1].sum().item() != input_tensor.size()[0]
-                # if is_padding_right:
-                #     raise ValueError(
-                #         "You are attempting to perform batched generation with padding_side='right'"
-                #         " this may lead to unexpected behaviour for Flash Attention version of Qwen2VL. Make sure to "
-                #         " call `tokenizer.padding_side  = 'left'` before tokenizing the input. "
-                #     )
             if attention_mask is not None and 0.0 in attention_mask:
                 return attention_mask
             return None
@@ -1641,7 +1633,6 @@ class Qwen2VLForConditionalGeneration(Qwen2VLPreTrainedModel, GenerationMixin):
                         inputs_embeds_w_image = torch.stack([inputs_embeds[i] for i in idx_w_image])
                         valid_pixel_values = [pixel_values[i] if isinstance(pixel_values[i], torch.Tensor) else torch.from_numpy(pixel_values[i]) for i in idx_w_image]
                         valid_pixel_values = torch.cat(valid_pixel_values).to(input_ids.device)  # shape=[BS*n_patch,C*H*W]
-                        # print_rank(f"valid_pixel_values.shape={str(valid_pixel_values.shape)}, len(idx_w_image)={len(idx_w_image)}, n_patch={valid_pixel_values.shape[0] // len(idx_w_image)}")
                         valid_grid_thw = [image_grid_thw[i] if isinstance(image_grid_thw[i], torch.Tensor) else torch.from_numpy(image_grid_thw[i]) for i in idx_w_image]
                         valid_grid_thw = torch.cat(valid_grid_thw).to(input_ids.device)  # shape=[BS,H,W]
 
@@ -1705,7 +1696,6 @@ class Qwen2VLForConditionalGeneration(Qwen2VLPreTrainedModel, GenerationMixin):
                         inputs_embeds_w_video = torch.stack([inputs_embeds[i] for i in idx_w_video])
                         valid_pixel_values = [pixel_values_videos[i] if isinstance(pixel_values_videos[i], torch.Tensor) else torch.from_numpy(pixel_values_videos[i]) for i in idx_w_video]
                         valid_pixel_values = torch.cat(valid_pixel_values).to(input_ids.device)  # shape=[BS_w_video*n_patch,T*C*H*W], say T*C*H*W=1176=2*3*14*14
-                        # print_rank(f"valid_pixel_values.shape={str(valid_pixel_values.shape)}, len(idx_w_video)={len(idx_w_video)}, n_patch={valid_pixel_values.shape[0] // len(idx_w_video)}")
                         valid_grid_thw = [video_grid_thw[i] if isinstance(video_grid_thw[i], torch.Tensor) else torch.from_numpy(video_grid_thw[i]) for i in idx_w_video]
                         valid_grid_thw = torch.cat(valid_grid_thw).to(input_ids.device)  # shape=[BS,H,W]
 

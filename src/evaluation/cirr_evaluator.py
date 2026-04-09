@@ -95,8 +95,8 @@ class CIRREvaluator:
         """Return default configuration when config file is not available"""
         return {
             'CIRR': {
-                'data_dir': '/home/guohaiyun/yty_data/CIRR/cirr',
-                'image_base_dir': '/home/guohaiyun/yty_data/CIRR',
+                'data_dir': '',
+                'image_base_dir': '',
                 'validation': {
                     'queries_file': 'captions/cap.rc2.val.json',
                     'splits_file': 'image_splits/split.rc2.val.json'
@@ -133,12 +133,11 @@ class CIRREvaluator:
                 self.image_base_dir = dataset_cirr_config.get('image_base_dir', cirr_config.get('image_base_dir'))
             else:
                 # Use eval config
-                self.data_dir = cirr_config.get('data_dir', '/home/guohaiyun/yty_data/CIRR/cirr')
-                self.image_base_dir = cirr_config.get('image_base_dir', '/home/guohaiyun/yty_data/CIRR')
+                self.data_dir = cirr_config.get('data_dir', '')
+                self.image_base_dir = cirr_config.get('image_base_dir', '')
         else:
-            # Use eval config
-            self.data_dir = cirr_config.get('data_dir', '/home/guohaiyun/yty_data/CIRR/cirr')
-            self.image_base_dir = cirr_config.get('image_base_dir', '/home/guohaiyun/yty_data/CIRR')
+            self.data_dir = cirr_config.get('data_dir', '')
+            self.image_base_dir = cirr_config.get('image_base_dir', '')
         
         # Set file paths using config
         validation_config = cirr_config.get('validation', {})

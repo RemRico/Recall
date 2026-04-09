@@ -573,7 +573,6 @@ class Attention(nn.Module):
 
     def _naive_attn(self, x):
         B, N, C = x.shape
-        # print(x.shape, torch.cuda.memory_allocated(), torch.cuda.memory_allocated())
         qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
         q, k, v = qkv.unbind(0)  # make torchscript happy (cannot use tensor as tuple)
 
@@ -586,7 +585,6 @@ class Attention(nn.Module):
         # attn = attn - attn.max(-1)[0].unsqueeze(-1)  # in case of overflow for fp16
         attn = attn.softmax(dim=-1)
         attn = self.attn_drop(attn)
-        # print(torch.cuda.memory_allocated(), torch.cuda.memory_allocated())
         x = (attn @ v).transpose(1, 2).reshape(B, N, C)
         x = self.proj(x)
         x = self.proj_drop(x)
@@ -921,10 +919,8 @@ class PretrainInternVideo2(nn.Module):
             'clip_img_pos_embed'
         }
 
-    # @torch.cuda.amp.autocast(enabled=False)
     def forward(self, x, mask=None, use_image=False, x_vis_return_idx=-1, x_vis_only=False):
         x = self.patch_embed(x.type(self.dtype))
-        # print(f"x.shape: {x.shape} x.dtype: {x.dtype}, model.dtype: {self.dtype}")
         B, T, L, C = x.shape  # T: temporal; L: spatial
         x = x.view([B, T * L, C])
 
@@ -941,17 +937,13 @@ class PretrainInternVideo2(nn.Module):
                     pos_embed = self.img_pos_embed
                 else:
                     # (1, num_img_patches + 1, embed_dim)
-                    # print('origin pos_embed.shape:', self.pos_embed.shape)
                     cls_pos_embed = self.pos_embed[:, 0:1, :]
-                    # print('cls_pos_embed.shape:', cls_pos_embed.shape)
 
                     img_pos_embed = self.pos_embed[:, 1:, :].view(1, self.num_frames,
                                                                   self.patch_embed.num_patches // self.num_frames,
                                                                   self.embed_dim).mean(dim=1)
-                    # print('img_pos_embed.shape:', img_pos_embed.shape)
 
                     pos_embed = torch.cat([cls_pos_embed, img_pos_embed], dim=1)
-                    # print('final img_pos_embed.shape:', pos_embed.shape)
             else:
                 pos_embed = self.pos_embed
         x = x + pos_embed
@@ -977,7 +969,6 @@ class PretrainInternVideo2(nn.Module):
                 else:
                     x_clip.append(x)
             if idx == (self.depth + x_vis_return_idx):
-                # print(f'idx = {idx} len(self.blocks)={len(self.blocks)}')
                 break
 
         if isinstance(x, tuple) and len(x) == 2:
@@ -1003,18 +994,13 @@ class PretrainInternVideo2(nn.Module):
                 if self.sep_image_video_pos_embed:
                     clip_pos_embed = self.clip_img_pos_embed
                 else:
-                    # (1, num_img_patches + 1, embed_dim)
-                    # print('origin pos_embed.shape:', self.pos_embed.shape)
                     clip_cls_pos_embed = self.clip_pos_embed[:, 0:1, :]
-                    # print('cls_pos_embed.shape:', cls_pos_embed.shape)
 
                     clip_img_pos_embed = self.clip_pos_embed[:, 1:, :].view(1, self.num_frames,
                                                                             self.patch_embed.num_patches // self.num_frames,
                                                                             self.embed_dim).mean(dim=1)
-                    # print('img_pos_embed.shape:', img_pos_embed.shape)
 
                     clip_pos_embed = torch.cat([clip_cls_pos_embed, clip_img_pos_embed], dim=1)
-                    # print('final img_pos_embed.shape:', pos_embed.shape)
 
             else:
                 clip_pos_embed = self.clip_pos_embed
@@ -3199,8 +3185,6 @@ class InternVideo2_Stage2(
         else:
             mask, targets_clip_middle_vis, targets_clip_final_vis = self.encode_teacher(image)
             # if mask is not None and (self.video_mask_type != 'tube' or self.image_mask_type != 'tube'):
-            #     keep_temporal = False
-            # print(f"\033[31mmask is {type(mask)}\033[0m")
             vision_embeds, pooled_vision_embeds, student_output, student_output_final = self.vision_encoder(
                 image, mask, use_image)
             return vision_embeds, pooled_vision_embeds, student_output, student_output_final, targets_clip_middle_vis, targets_clip_final_vis

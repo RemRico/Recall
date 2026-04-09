@@ -104,7 +104,6 @@ class BaseVisualRetrieverProcessor(ABC, ProcessorMixin):
 
         for i in range(0, len(qs), batch_size):
             scores_batch = []
-            # qs_batch = torch.nn.utils.rnn.pad_sequence(qs[i : i + batch_size], batch_first=True, padding_value=0).to(device)
             qs_batch = qs[i : i + batch_size].to(device)
             for j in range(0, len(ps), batch_size):
                 ps_batch = torch.nn.utils.rnn.pad_sequence(

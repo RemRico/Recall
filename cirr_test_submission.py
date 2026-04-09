@@ -89,8 +89,10 @@ def _resolve_cirr_paths(evaluator: CIRREvaluator,
     image_dir = cirr_image_dir if cirr_image_dir else getattr(evaluator, 'image_base_dir', None)
 
     if not data_dir or not image_dir:
-        data_dir = getattr(evaluator, 'data_dir', '/home/guohaiyun/yty_data/CIRR/cirr')
-        image_dir = getattr(evaluator, 'image_base_dir', '/home/guohaiyun/yty_data/CIRR')
+        raise ValueError(
+            "CIRR data paths must be provided via --cirr_data_dir and --cirr_image_dir. "
+            "See README for dataset download instructions."
+        )
 
     print_master(f"CIRR data_dir: {data_dir}")
     print_master(f"CIRR image_dir: {image_dir}")

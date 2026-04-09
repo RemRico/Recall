@@ -477,11 +477,6 @@ def Qwen2_VL_process_fn(model_inputs: dict, processor: Qwen2VLProcessor, max_len
     # 2. padding inputs
     batch_encoding = processor.tokenizer.pad({'input_ids': input_ids}, return_tensors="pt")
     input_ids, attention_mask = batch_encoding['input_ids'], batch_encoding['attention_mask']
-    # manually enforce long type due to:
-    # (1) [rank7]: RuntimeError: Expected tensor for argument #1 'indices' to have one of the following scalar types: Long, Int; but got torch.cuda.FloatTensor instead (while checking arguments for embedding)
-    # (2) [rank7]:   File "/fsx/home/ruimeng/project/VLM2Vec/src/model.py", line 45, in _pooling
-    #     [rank7]:     reps = last_hidden_state[
-    #     [rank7]: IndexError: tensors used as indices must be long, int, byte or bool tensors
     inputs = {
         'input_ids': input_ids.long(),
         'attention_mask': attention_mask.long(), 
@@ -592,11 +587,6 @@ def Qwen2_VL_TokenSelection_process_fn(model_inputs: dict, processor: Qwen2VLTok
             padded_key = [torch.nn.functional.pad(pos, (0, max_length - pos.size(1)), value=True) for pos in key_tmp]
             select_mask = torch.cat(padded_key, dim=0)
 
-    # manually enforce long type due to:
-    # (1) [rank7]: RuntimeError: Expected tensor for argument #1 'indices' to have one of the following scalar types: Long, Int; but got torch.cuda.FloatTensor instead (while checking arguments for embedding)
-    # (2) [rank7]:   File "/fsx/home/ruimeng/project/VLM2Vec/src/model.py", line 45, in _pooling
-    #     [rank7]:     reps = last_hidden_state[
-    #     [rank7]: IndexError: tensors used as indices must be long, int, byte or bool tensors
     inputs = {
         'input_ids': input_ids.long(),
         'attention_mask': attention_mask.long()

@@ -88,8 +88,8 @@ class FashionIQEvaluator:
     def _get_default_config(self) -> Dict[str, Any]:
         return {
             'FashionIQ': {
-                'data_dir': '/home/guohaiyun/yty_data/FashionIQ',
-                'image_base_dir': '/home/guohaiyun/yty_data/FashionIQ/images',
+                'data_dir': '',
+                'image_base_dir': '',
                 'categories': ['dress', 'shirt', 'toptee'],
                 'validation': {
                     'queries_files': {
@@ -114,7 +114,7 @@ class FashionIQEvaluator:
         fiq_cfg = self.eval_config.get('FashionIQ', {})
 
         # Prefer dataset YAML path if provided
-        self.data_dir = fiq_cfg.get('data_dir', '/home/guohaiyun/yty_data/FashionIQ')
+        self.data_dir = fiq_cfg.get('data_dir', '')
         self.image_base_dir = fiq_cfg.get('image_base_dir', os.path.join(self.data_dir, 'images'))
         self.categories = fiq_cfg.get('categories', ['dress', 'shirt', 'toptee'])
         

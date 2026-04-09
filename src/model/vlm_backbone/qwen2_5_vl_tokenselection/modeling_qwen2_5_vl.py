@@ -163,7 +163,7 @@ class Qwen2_5_VLPatchMerger(nn.Module):
 
 
 def apply_rotary_pos_emb_flashatt(tensor: torch.Tensor, freqs: torch.Tensor) -> torch.Tensor:
-    # tensor_ = tensor.float()  # why this? it will be cast to float32 and cause AssertionError: Input and cos/sin must have the same dtype, got torch.float32 and torch.bfloat16
+    # Keep tensor dtype aligned with cos/sin from freqs (e.g. bfloat16); casting to float32 breaks rotary emb.
     tensor_ = tensor
     cos = freqs.cos()
     sin = freqs.sin()
@@ -1503,16 +1503,6 @@ class Qwen2_5_VLModel(Qwen2_5_VLPreTrainedModel):
         output_attentions: bool,
     ):
         if self.config._attn_implementation == "flash_attention_2":
-            # if attention_mask is not None and past_key_values is not None:
-                # is_padding_right = attention_mask[:, -1].sum().item() != input_tensor.size()[0]
-                # if is_padding_right:
-                #     print_rank(f'attention_mask[:, -1].sum().item()={attention_mask[:, -1].sum().item()}')
-                #     print_rank(f'input_tensor.size()[0]={input_tensor.size()[0]}')
-                #     raise ValueError(
-                #         "You are attempting to perform batched generation with padding_side='right'"
-                #         " this may lead to unexpected behaviour for Flash Attention version of Qwen2_5_VL. Make sure to "
-                #         " call `tokenizer.padding_side  = 'left'` before tokenizing the input. "
-                #     )
             if attention_mask is not None and 0.0 in attention_mask:
                 return attention_mask
             return None
@@ -2069,7 +2059,6 @@ class Qwen2_5_VLForConditionalGeneration(Qwen2_5_VLPreTrainedModel, GenerationMi
                     inputs_embeds_w_image = torch.stack([inputs_embeds[i] for i in idx_w_image])
                     valid_pixel_values = [pixel_values[i] if isinstance(pixel_values[i], torch.Tensor) else torch.from_numpy(pixel_values[i]) for i in idx_w_image]
                     valid_pixel_values = torch.cat(valid_pixel_values).to(input_ids.device)  # shape=[BS*n_patch,C*H*W]
-                    # print_rank(str(valid_pixel_values.shape))
                     valid_image_sizes = [image_grid_thw[i] if isinstance(image_grid_thw[i], torch.Tensor) else torch.from_numpy(image_grid_thw[i]) for i in idx_w_image]
                     valid_image_sizes = torch.cat(valid_image_sizes).to(input_ids.device)  # shape=[BS,H,W]
 
