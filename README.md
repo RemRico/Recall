@@ -258,9 +258,11 @@ A foundation VLM (e.g., Qwen2.5-VL-7B) generates alternative modification texts 
 ## Citation
 
 ```bibtex
-@article{recall2025,
-  title={Recall: Iterative Training for Composed Image Retrieval with Hard Negative Mining},
-  year={2025}
+@article{yang2026recall,
+  title={ReCALL: Recalibrating Capability Degradation for MLLM-based Composed Image Retrieval},
+  author={Yang, Tianyu and He, ChenWei and Hao, Xiangzhao and Wang, Tianyue and Guo, Jiarui and Guo, Haiyun and Qu, Leigang and Wang, Jinqiao and Chua, Tat-Seng},
+  journal={arXiv preprint arXiv:2602.01639},
+  year={2026}
 }
 ```
 
