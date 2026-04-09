@@ -1,31 +1,21 @@
 # CIRR Evaluation Configuration
-# This file contains the configuration for CIRR dataset evaluation
 
 CIRR:
-  # CIRR dataset paths
-  data_dir: "/home/guohaiyun/yty_data/CIRR/cirr"           # Directory containing CIRR annotation files
-  image_base_dir: "/home/guohaiyun/yty_data/CIRR"         # Base directory for CIRR images
+  data_dir: /path/to/CIRR/cirr
+  image_base_dir: /path/to/CIRR
   
-  # Validation dataset configuration
   validation:
-    queries_file: "captions/cap.rc2.val.json"             # Validation queries file (relative to data_dir)
-    splits_file: "image_splits/split.rc2.val.json"        # Image splits file (relative to data_dir)
+    queries_file: captions/cap.rc2.val.json
+    splits_file: image_splits/split.rc2.val.json
   
-  # Evaluation parameters
   evaluation:
-    batch_size: 16                                         # Batch size for encoding (can be overridden by command line)
-    global_recall_k: [1, 5, 10, 50]                      # Global Recall@K metrics to compute
-    group_recall_k: [1, 2, 3]                            # Group Recall@K metrics to compute
+    batch_size: 16
+    global_recall_k: [1, 5, 10, 50]
+    group_recall_k: [1, 2, 3]
 
-# Model configuration
 model:
-  default_backbone: "qwen2_vl"                            # Default model backbone
-  max_length: 512                                         # Maximum sequence length
-  
-  # Instruction templates for different types of inputs
+  default_backbone: qwen2_vl
+  max_length: 512
   instructions:
-    query_instruction: "Represent the given image with the following modification"  # Instruction for composed queries
-    target_instruction: ""                                # Instruction for target images (usually empty)
-
-# Optional: Custom evaluation settings
-# You can add additional configuration sections here for different datasets or evaluation modes
+    query_instruction: "Represent the given image with the following modification"
+    target_instruction: ""

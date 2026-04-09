@@ -95,10 +95,45 @@ Recall/
 - Train/dev/test splits with group-level evaluation
 - Config: `configs/cirr_iterative.yaml`
 
+**Download**: Follow the instructions in the [CIRR official repository](https://github.com/Cuberick-Orion/CIRR) to download the dataset. After downloading, the expected directory structure is:
+
+```
+CIRR/
+├── dev/                          # Dev split images (NLVR2 source)
+├── test1/                        # Test split images
+├── cirr/
+│   ├── captions/
+│   │   ├── cap.rc2.train.json    # Training captions
+│   │   ├── cap.rc2.val.json      # Validation captions
+│   │   └── cap.rc2.test1.json    # Test captions
+│   └── image_splits/
+│       ├── split.rc2.train.json  # Training image split
+│       ├── split.rc2.val.json    # Validation image split
+│       └── split.rc2.test1.json  # Test image split
+```
+
 ### FashionIQ
 - Fashion domain composed retrieval across categories (dress, shirt, toptee)
 - Category-aware sampling and evaluation
 - Config: `configs/fashioniq_iterative.yaml`
+
+**Download**: Follow the instructions in the [FashionIQ official repository](https://github.com/XiaoxiaoGuo/fashion-iq) to download the dataset. After downloading, the expected directory structure is:
+
+```
+FashionIQ/
+├── images/                       # Product images
+│   ├── B00006M009.jpg
+│   ├── ...
+├── captions/
+│   ├── cap.dress.train.json      # Dress training captions
+│   ├── cap.dress.val.json        # Dress validation captions
+│   ├── cap.shirt.train.json
+│   ├── cap.shirt.val.json
+│   ├── cap.toptee.train.json
+│   └── cap.toptee.val.json
+```
+
+After downloading, update the `data_dir` and `image_base_dir` paths in the corresponding config files under `configs/`.
 
 ## Training
 
